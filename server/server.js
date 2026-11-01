@@ -325,10 +325,12 @@ function cleanAlerts(list) {
     const out = {};
     for (const k of ['id', 'type', 'title', 'ship', 'shipName', 'sailDate', 'category', 'categoryName', 'day', 'port', 'productId', 'currency', 'unit',
       'initialPrice', 'target', 'lastPrice', 'lowestSeen', 'status', 'lastChecked', 'lastError', 'notifiedPrice', 'created',
-      'cabinName', 'packageCode', 'host', 'adults', 'children']) {
+      'cabinName', 'packageCode', 'host', 'adults', 'children', 'loyaltyNumber', 'state', 'senior', 'military', 'police', 'fire']) {
       if (a[k] !== undefined && (a[k] === null || ['string', 'number', 'boolean'].includes(typeof a[k]))) out[k] = typeof a[k] === 'string' ? a[k].slice(0, 300) : a[k];
     }
     if (out.host && !['www.royalcaribbean.com', 'www.celebritycruises.com'].includes(out.host)) out.host = 'www.royalcaribbean.com';
+    if (out.loyaltyNumber !== undefined && !/^\d{4,15}$/.test(String(out.loyaltyNumber))) delete out.loyaltyNumber;
+    if (out.state !== undefined && !/^[A-Z]{2}$/.test(String(out.state))) delete out.state;
     return out;
   });
 }
@@ -421,6 +423,10 @@ async function api(req, res, url) {
       adults: Math.min(8, Math.max(1, parseInt(o.adults, 10) || 2)), children: Math.min(8, Math.max(0, parseInt(o.children, 10) || 0)),
       host: o.host === 'www.celebritycruises.com' ? o.host : 'www.royalcaribbean.com'
     };
+    // discount qualifiers (Crown & Anchor / Captain's Club number, residency, 55+, military, police, fire)
+    if (/^\d{4,15}$/.test(String(o.loyaltyNumber || ''))) opts.loyaltyNumber = String(o.loyaltyNumber);
+    if (/^[A-Z]{2}$/.test(String(o.state || ''))) opts.state = String(o.state);
+    for (const k of ['senior', 'military', 'police', 'fire']) if (o[k] === true) opts[k] = true;
     try { return send(res, 200, await Core.getCabins(upstreamHttp, opts)); }
     catch (e) { return send(res, 502, { error: e.message }); }
   }

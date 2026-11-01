@@ -54,6 +54,10 @@ async function call(method, p, body, who = 'a', extra = {}) {
     const cab = await call('POST', '/api/cabins', { packageCode: 'WNW123', sailDate: '20270110', adults: 2, children: 0, currency: 'USD' });
     assert(cab.status === 200 && cab.json[0].connectingPrice === 1650 && cab.json[1].price === 2399, 'cabin prices parsed (connecting + sold-out subtype skipped)');
 
+    const dc = await call('POST', '/api/cabins', { packageCode: 'WNW123', sailDate: '20270110', adults: 2, loyaltyNumber: '987654321', state: 'FL', senior: true });
+    assert(dc.status === 200 && dc.json[0].price === 1299, 'Crown & Anchor + state discounts passed to the cruise line');
+    const bad = await call('POST', '/api/cabins', { packageCode: 'WNW123', sailDate: '20270110', loyaltyNumber: '1&r0x=evil', state: 'florida' });
+    assert(bad.status === 200 && bad.json[0].price === 1499.5, 'malformed discount values ignored');
     assert((await call('POST', '/api/admin/users', { username: 'firstmate', password: 'short' })).status === 400, 'weak password refused');
     assert((await call('POST', '/api/admin/users', { username: 'firstmate', password: 'aye-aye-sir-42' })).status === 200, 'admin creates user');
     assert((await call('POST', '/api/login', { username: 'firstmate', password: 'aye-aye-sir-42' }, 'b')).status === 200, 'new user logs in');

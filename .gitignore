@@ -4,3 +4,4 @@ node_modules/
 data/
 *.p12
 .env
+test/shots/

@@ -16,7 +16,10 @@ scripts by jdeath. Not affiliated with Royal Caribbean Group.
      combination for Interior / Ocean View / Balcony / Suite — optionally **connecting cabins only**
 3. Tap 🔔 on anything (excursions, packages, cabins) for a **price alert**: any drop, or below your price.
    Android checks in the background (every 3/6/12/24 h) and sends a notification.
-4. **My Cruises**: sign in with your cruise line account to see whether anything you already
+4. **Discounts** (Settings): Crown & Anchor / Captain's Club number, state of residence, 55+,
+   military, police, firefighter. Cabin prices then show *your* price next to the public price
+   (also used by the group planner and cabin alerts). Signing in under My Cruises can fill these in.
+5. **My Cruises**: sign in with your cruise line account to see whether anything you already
    bought is cheaper now (rebook & save).
 
 ## Docker web version (this branch)

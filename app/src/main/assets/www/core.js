@@ -265,8 +265,12 @@
       packageCode: o.packageCode, sailDate: d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8),
       country: 'USA', selectedCurrencyCode: o.currency || 'USD', shipCode: o.packageCode.slice(0, 2),
       cabinClassType: 'INTERIOR', roomIndex: '0', r0a: String(o.adults || 2), r0c: String(o.children || 0),
-      r0b: 'n', r0r: 'n', r0s: 'n', r0q: 'n', r0t: 'n', r0d: 'INTERIOR', r0D: 'y', rgVisited: 'true', r0C: 'y'
+      r0b: 'n', r0r: o.police ? 'y' : 'n', r0s: o.fire ? 'y' : 'n', r0q: o.military ? 'y' : 'n', r0t: o.senior ? 'y' : 'n',
+      r0d: 'INTERIOR', r0D: 'y', rgVisited: 'true', r0C: 'y'
     };
+    // discount qualifiers, same URL parameters CheckRoyalCaribbeanPrice.py sends
+    if (o.loyaltyNumber) params.r0l = String(o.loyaltyNumber);
+    if (o.state) params.r0k = String(o.state);
     return 'https://' + (o.host || 'www.royalcaribbean.com') + '/room-selection/type-and-subtype?' + qs(params);
   }
 
@@ -463,6 +467,48 @@
 
   function unwrap(j) { return j && j.payload !== undefined ? j.payload : j; }
 
+  /* Crown & Anchor / Captain's Club numbers, tier and residency from the signed-in profile. */
+  async function getProfile(http, auth) {
+    var apiBrand = auth.line === 'royalcaribbean' ? 'royal' : 'celebrity';
+    var j = unwrap(await getJson(http, 'GET', API + '/en/' + apiBrand + '/web/v3/guestAccounts/' + encodeURIComponent(auth.accountId), {
+      headers: { 'Access-Token': auth.token, 'AppKey': APPKEY_WEB, 'vds-id': auth.accountId, 'account-id': auth.accountId, 'User-Agent': UA_WEB, 'Accept': 'application/json' }
+    })) || {};
+    var loy = j.loyaltyInformation || {};
+    var addr = (j.contactInformation || {}).address || {};
+    return {
+      crownAnchor: loy.crownAndAnchorId ? String(loy.crownAndAnchorId) : '',
+      crownAnchorTier: loy.crownAndAnchorSocietyLoyaltyTier || '',
+      crownAnchorPoints: loy.crownAndAnchorSocietyLoyaltyIndividualPoints || 0,
+      captainsClub: loy.captainsClubId ? String(loy.captainsClubId) : '',
+      captainsClubTier: loy.captainsClubLoyaltyTier || '',
+      captainsClubPoints: loy.captainsClubLoyaltyIndividualPoints || 0,
+      clubRoyaleTier: loy.clubRoyaleLoyaltyTier || '',
+      state: (addr.residencyCountryCode === 'USA' || addr.residencyCountryCode === 'CAN') ? (addr.state || '') : ''
+    };
+  }
+
+  /* Discount qualifiers for one ship: Crown & Anchor for Royal, Captain's Club for Celebrity. */
+  function discountOpts(d, shipName) {
+    d = d || {};
+    var o = {};
+    var num = isRoyalShip(shipName) ? d.crownAnchor : d.captainsClub;
+    if (num && /^\d{4,15}$/.test(String(num))) o.loyaltyNumber = String(num);
+    if (d.state && /^[A-Z]{2}$/.test(d.state)) o.state = d.state;
+    ['senior', 'military', 'police', 'fire'].forEach(function (k) { if (d[k]) o[k] = true; });
+    return o;
+  }
+
+  function discountLabels(o) {
+    var l = [];
+    if (o.loyaltyNumber) l.push('loyalty #');
+    if (o.state) l.push(o.state + ' resident');
+    if (o.senior) l.push('55+');
+    if (o.military) l.push('military');
+    if (o.police) l.push('police');
+    if (o.fire) l.push('firefighter');
+    return l;
+  }
+
   /*
    * Checks every purchased Cruise Planner item on the account.
    * onProgress({booking}) / onProgress({item}) are called as results arrive.
@@ -563,7 +609,7 @@
     getShips: getShips, getSailings: getSailings, getItinerary: getItinerary,
     getCategories: getCategories, getProducts: getProducts, getCabins: getCabins,
     parseCabins: parseCabins, planSplits: planSplits, occupanciesFor: occupanciesFor, bestCombos: bestCombos, cabinUrl: cabinUrl, CABIN_HEADERS: CABIN_HEADERS, extractJsonArray: extractJsonArray,
-    checkAlert: checkAlert, login: login, checkPurchases: checkPurchases,
+    checkAlert: checkAlert, login: login, checkPurchases: checkPurchases, getProfile: getProfile, discountOpts: discountOpts, discountLabels: discountLabels,
     classifyCategory: classifyCategory, parsePrice: parsePrice, productPrice: productPrice,
     titleCase: titleCase, isRoyalShip: isRoyalShip, brandHost: brandHost, plannerUrl: plannerUrl,
     fmtMoney: fmtMoney, fmtSailDate: fmtSailDate, sailDateObj: sailDateObj

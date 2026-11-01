@@ -44,7 +44,31 @@ const path = require('path');
   await shot('7-alerts');
   await page.click('[data-root=mycruises]'); await page.waitForSelector('text=Sign in & check my purchases');
   await shot('8-mycruises');
+  // My Cruises sign-in fills the Crown & Anchor number + state from the profile
+  await page.fill('input[type=email]', 'me@example.com');
+  await page.fill('input[type=password]', 'secret');
+  await page.click('text=Sign in & check my purchases');
+  await page.waitForSelector('text=Crown & Anchor · Diamond');
+  await page.click('text=Use these for my cabin prices');
+  await page.waitForSelector('text=Used for your cabin prices');
+  await shot('9-profile');
   await page.click('[data-root=settings]'); await page.waitForSelector('text=Currency');
+  const ca = await page.inputValue('input[placeholder="e.g. 123456789"]');
+  if (ca !== '987654321') throw new Error('C&A not saved: ' + ca);
+  await page.check('text=55 or older');
+  await page.click('text=Save discounts');
+  await shot('10-discounts');
+  // cabins now show your price vs public
+  await page.click('[data-root=explore]');
+  await page.click('text=Wonder of the Seas'); await page.click('text=7 Night Western Caribbean');
+  await page.click('[data-tab=cabins]'); await page.click('text=One cabin');
+  await page.waitForSelector('text=Your discounts are on');
+  await page.waitForSelector('text=You save');
+  const all = await page.evaluate(() => window.__cabinOpts);
+  await shot('11-cabins-discount');
+  if (!all.some(o => o.loyaltyNumber === '987654321' && o.state === 'FL' && o.senior)) throw new Error('discounts not sent: ' + JSON.stringify(all));
+  if (!all.some(o => !o.loyaltyNumber)) throw new Error('public comparison price not fetched');
+  await page.click('[data-root=settings]');
   // back-button behaviour
   await page.click('[data-root=explore]'); await page.click('text=Wonder of the Seas');
   const handled = await page.evaluate(() => window.onNativeBack());

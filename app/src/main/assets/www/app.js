@@ -32,6 +32,7 @@
   function pref(k, d) { try { var v = localStorage.getItem('cd.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }
   function setPref(k, v) { try { localStorage.setItem('cd.' + k, JSON.stringify(v)); } catch (e) { /* ignore */ } }
   function currency() { return pref('currency', 'USD'); }
+  function discounts() { return pref('discounts', {}); }
   var money = function (n, c) { return Core.fmtMoney(n, c || currency()); };
 
   function toast(msg) {
@@ -80,7 +81,7 @@
   }
   function alertId(a) {
     return a.type === 'cabin'
-      ? ['cabin', a.packageCode, a.sailDate, a.cabinName, a.adults, a.children, a.currency].join('|')
+      ? ['cabin', a.packageCode, a.sailDate, a.cabinName, a.adults, a.children, a.currency, a.loyaltyNumber || '', a.state || '', a.senior ? 's' : '', a.military ? 'm' : '', a.police ? 'p' : '', a.fire ? 'f' : ''].join('|')
       : ['product', a.ship, a.sailDate, a.category, a.day, a.productId, a.currency].join('|');
   }
   function findAlert(a) { var id = alertId(a); for (var i = 0; i < alerts.length; i++) if (alerts[i].id === id) return alerts[i]; return null; }
@@ -346,19 +347,33 @@
           h('button', { 'aria-label': 'Fewer ' + label, text: '−', onclick: function () { if (obj[key] > min) set(obj[key] - 1); } }), val,
           h('button', { 'aria-label': 'More ' + label, text: '+', onclick: function () { if (obj[key] < max) set(obj[key] + 1); } })));
     }
-    function cabinOpts(adults, children) {
-      return { packageCode: ship.code + sailing.voyageCode, sailDate: sailing.date, currency: currency(), adults: adults, children: children, host: Core.brandHost(ship.name) };
+    var disc = Core.discountOpts(discounts(), ship.name);
+    var discLabels = Core.discountLabels(disc);
+    function cabinOpts(adults, children, publicOnly) {
+      var o = { packageCode: ship.code + sailing.voyageCode, sailDate: sailing.date, currency: currency(), adults: adults, children: children, host: Core.brandHost(ship.name) };
+      if (!publicOnly) for (var k in disc) o[k] = disc[k];
+      return o;
+    }
+    function discountBanner() {
+      var loyaltyName = Core.isRoyalShip(ship.name) ? 'Crown & Anchor' : 'Captain\'s Club';
+      return discLabels.length
+        ? h('div', { class: 'card small', style: 'border-left:5px solid var(--sea)' }, h('b', { text: '\u{1F3F7}\uFE0F Your discounts are on' }), ' \u2014 ' + discLabels.join(', ').replace('loyalty #', loyaltyName + ' #'),
+            h('div', { class: 'muted', text: 'Prices below are what you would pay; the public price is shown for comparison.' }))
+        : h('div', { class: 'card small' }, h('b', { text: 'Have a ' + loyaltyName + ' number?' }), ' Add it in ',
+            h('a', { href: '#', text: 'Settings \u2192 Discounts', onclick: function (e) { e.preventDefault(); setRoot('settings'); } }), ' (plus state, 55+, military\u2026) to see your own cabin prices.');
     }
     function who(a, c) { return a + ' adult' + (a > 1 ? 's' : '') + (c ? ' + ' + c + ' kid' + (c > 1 ? 's' : '') : ''); }
     function draw() {
       clear(form); clear(out);
       if (mode === 'one') {
+        add(form, discountBanner());
         add(form, h('div', { class: 'card' }, h('b', { text: 'Who\'s in the cabin?' }), stepper(party, 'party', 'Adults', 'adults', 1, 6), stepper(party, 'party', 'Children', 'children', 0, 6),
           h('button', { class: 'btn block', style: 'margin-top:8px', text: 'Show cabin prices', onclick: loadOne })));
         loadOne();
       } else {
         var conn = h('input', { type: 'checkbox', checked: group.connecting });
         conn.onchange = function () { group.connecting = conn.checked; setPref('group', group); };
+        add(form, discountBanner());
         add(form, h('div', { class: 'card' },
           h('b', { text: 'Your whole travel group' }),
           h('div', { class: 'small muted', text: 'We try every way to split your group (like 2+4 or 3+3), price each cabin for exactly who is in it, and show the cheapest total for each cabin type.' }),
@@ -371,23 +386,30 @@
     function loadOne() {
       clear(out); add(out, skeleton(4));
       var opts = cabinOpts(party.adults, party.children);
-      api.cabins(opts).then(function (cabins) {
+      var hasDisc = discLabels.length > 0;
+      Promise.all([api.cabins(opts), hasDisc ? api.cabins(cabinOpts(party.adults, party.children, true)).catch(function () { return []; }) : Promise.resolve([])]).then(function (both) {
         if (!alive()) return;
+        var cabins = both[0], pub = {};
+        both[1].forEach(function (c) { pub[c.name] = c.price; });
         clear(out);
         if (!cabins.length) { add(out, empty('\u{1F6AB}', 'No cabins for ' + who(party.adults, party.children), 'The sailing may be sold out, or no cabin fits this many guests.')); return; }
         var n = party.adults + party.children;
-        add(out, h('div', { class: 'notice', text: 'Cheapest public price per cabin type for ' + who(party.adults, party.children) + ', taxes & fees included as quoted by the cruise line.' }));
+        add(out, h('div', { class: 'notice', text: 'Cheapest ' + (hasDisc ? 'price with your discounts' : 'public price') + ' per cabin type for ' + who(party.adults, party.children) + ', taxes & fees included as quoted by the cruise line.' }));
         add(out, h('div', { class: 'list' }, cabins.map(function (c) {
-          var base = { type: 'cabin', title: c.name + ' cabin (' + who(party.adults, party.children) + ')', cabinName: c.name, packageCode: opts.packageCode, sailDate: sailing.date, host: opts.host,
+          var base = { type: 'cabin', title: c.name + ' cabin (' + who(party.adults, party.children) + ')' + (hasDisc ? ' with discounts' : ''), cabinName: c.name, packageCode: opts.packageCode, sailDate: sailing.date, host: opts.host,
             adults: party.adults, children: party.children, currency: opts.currency, ship: ship.code, shipName: ship.name, categoryName: 'Cabins', initialPrice: c.price };
+          for (var k in disc) base[k] = disc[k];
           base.id = alertId(base);
           var bell = c.price === null ? null : h('button', { class: 'bell' + (findAlert(base) ? ' on' : ''), 'aria-label': 'Price alert for ' + c.name, text: '\u{1F514}' });
           if (bell) bell.onclick = function () { openAlertSheet(JSON.parse(JSON.stringify(base)), bell); };
+          var publicPrice = pub[c.name];
+          var saving = hasDisc && c.price !== null && typeof publicPrice === 'number' && publicPrice > c.price ? publicPrice - c.price : 0;
           return h('div', { class: 'prod' },
             h('div', { class: 'grow' }, h('div', { class: 't', text: c.name }),
               h('div', { class: 'v', text: c.price === null ? 'Sold out' : money(c.price / n, opts.currency) + ' per person' }),
+              saving ? h('div', { class: 'v' }, h('span', { class: 'pill ok', text: 'You save ' + money(saving, opts.currency) })) : (hasDisc && c.price !== null && typeof publicPrice === 'number' ? h('div', { class: 'v', text: 'Same as public price' }) : null),
               c.connectingPrice !== null && c.connectingPrice !== undefined ? h('div', { class: 'v', text: '\u{1F6AA} Connecting from ' + money(c.connectingPrice, opts.currency) }) : null),
-            h('div', { class: 'price' }, c.price === null ? h('span', { class: 'pill warn', text: 'Sold out' }) : [h('b', { text: money(c.price, opts.currency) }), h('span', { class: 'u', text: 'total' })]),
+            h('div', { class: 'price' }, c.price === null ? h('span', { class: 'pill warn', text: 'Sold out' }) : [saving ? h('s', { text: money(publicPrice, opts.currency) }) : null, h('b', { text: money(c.price, opts.currency) }), h('span', { class: 'u', text: hasDisc ? 'your price' : 'total' })]),
             bell);
         })));
       }).catch(function (e) { if (alive()) { clear(out); add(out, errBox(e)); } });
@@ -417,7 +439,7 @@
           return;
         }
         var cur = currency();
-        add(out, h('div', { class: 'notice', text: 'Cheapest way to fit ' + who(group.adults, group.children) + ' on this sailing, by cabin type. Totals add up each cabin\'s public price (taxes & fees included).' }));
+        add(out, h('div', { class: 'notice', text: 'Cheapest way to fit ' + who(group.adults, group.children) + ' on this sailing, by cabin type. Totals add up each cabin\'s ' + (discLabels.length ? 'price with your discounts' : 'public price') + ' (taxes & fees included).' }));
         res.forEach(function (r) {
           var best = r.best;
           var others = r.options.slice(1, 4);
@@ -585,13 +607,41 @@
     if (!session) return loginForm(v);
     var out = h('div');
     add(v, [h('div', { class: 'row', style: 'margin-bottom:10px' }, h('div', { class: 'grow small muted', text: 'Signed in to ' + (session.line === 'royalcaribbean' ? 'Royal Caribbean' : 'Celebrity') }),
-      h('button', { class: 'btn ghost', text: 'Sign out', onclick: function () { session = null; lastResults = null; render(); } })), out]);
+      h('button', { class: 'btn ghost', text: 'Sign out', onclick: function () { session = null; lastResults = null; profile = null; render(); } })), out]);
+    var profBox = h('div');
+    out.parentNode.insertBefore(profBox, out);
+    showProfile(profBox);
     if (lastResults) return drawResults(out, lastResults, false);
     add(out, h('div', { class: 'progress' }, h('span', { class: 'spin' }), 'Looking up your bookings and purchases…'));
     Core.checkPurchases(http, session, pref('currency', ''), function (ev) { if (document.body.contains(out)) drawResults(out, ev.results, true); })
       .then(function (r) { lastResults = r; if (document.body.contains(out)) drawResults(out, r, false); })
       .catch(function (e) { clear(out); add(out, errBox(e)); });
   };
+  var profile = null;
+  function showProfile(box) {
+    var render = function (p) {
+      clear(box);
+      var royal = session.line === 'royalcaribbean';
+      var num = royal ? p.crownAnchor : p.captainsClub;
+      if (!num && !p.state) return;
+      var tier = royal ? p.crownAnchorTier : p.captainsClubTier, pts = royal ? p.crownAnchorPoints : p.captainsClubPoints;
+      var d = discounts();
+      var already = (royal ? d.crownAnchor : d.captainsClub) === num && (!p.state || d.state === p.state);
+      add(box, h('div', { class: 'card' },
+        h('b', { text: (royal ? 'Crown & Anchor' : 'Captain\'s Club') + (tier ? ' · ' + Core.titleCase(String(tier).replace(/_/g, ' ')) : '') }),
+        h('div', { class: 'small muted', text: [num ? '#' + num : '', pts ? pts + ' points' : '', p.state ? p.state + ' resident' : ''].filter(Boolean).join(' · ') }),
+        already ? h('div', { class: 'small', style: 'margin-top:6px', text: '✓ Used for your cabin prices' })
+          : h('button', { class: 'btn block', style: 'margin-top:10px', text: 'Use these for my cabin prices', onclick: function () {
+            var nd = discounts();
+            if (royal) nd.crownAnchor = num || nd.crownAnchor; else nd.captainsClub = num || nd.captainsClub;
+            if (p.state) nd.state = p.state;
+            setPref('discounts', nd); mem = {}; toast('Saved – cabin prices now use your discounts'); render(p);
+          } })));
+    };
+    if (profile) return render(profile);
+    Core.getProfile(http, session).then(function (p) { profile = p; if (document.body.contains(box)) render(p); }).catch(function () { /* optional */ });
+  }
+
   function drawResults(out, bookings, busy) {
     if (!bookings) return;
     clear(out);
@@ -639,7 +689,7 @@
       if (!user.value || !pass.value) { add(msg, errBox('Enter your email and password.')); return; }
       btn.disabled = true; btn.textContent = 'Signing in…';
       setPref('login', { line: line.value, user: user.value, pass: P.features.rememberPassword && remember.checked ? pass.value : undefined });
-      Core.login(http, user.value.trim(), pass.value, line.value).then(function (s) { session = s; lastResults = null; render(); })
+      Core.login(http, user.value.trim(), pass.value, line.value).then(function (s) { session = s; lastResults = null; profile = null; render(); })
         .catch(function (e) { btn.disabled = false; btn.textContent = 'Sign in & check my purchases'; add(msg, errBox(e)); });
     };
   }
@@ -654,12 +704,44 @@
         mem = {}; try { Object.keys(localStorage).forEach(function (k) { if (k.indexOf('cd.cache.') === 0) localStorage.removeItem(k); }); } catch (e) { /* ignore */ }
         toast('Cache cleared');
       } })));
+    add(v, discountsCard());
     if (P.kind === 'web') webAccountSettings(v);
     add(v, h('div', { class: 'card small muted' },
       h('b', { text: 'About' }), h('br'),
       'Prices come from the cruise lines\' public websites. This app is not affiliated with Royal Caribbean Group. ',
       'Based on the open-source CheckRoyalCaribbeanPrice project by jdeath.'));
   };
+
+  var STATES = ['', 'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY',
+    'AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'ON', 'PE', 'QC', 'SK'];
+  function discountsCard() {
+    var d = discounts();
+    var ca = h('input', { inputmode: 'numeric', autocomplete: 'off', placeholder: 'e.g. 123456789', value: d.crownAnchor || '' });
+    var cc = h('input', { inputmode: 'numeric', autocomplete: 'off', placeholder: 'Celebrity only', value: d.captainsClub || '' });
+    var st = h('select', null, STATES.map(function (x) { return h('option', { value: x, selected: (d.state || '') === x, text: x || 'Not set' }); }));
+    var flags = [['senior', '55 or older'], ['military', 'Military / veteran'], ['police', 'Police / EMT'], ['fire', 'Firefighter']].map(function (f) {
+      var cb = h('input', { type: 'checkbox', checked: !!d[f[0]] });
+      cb.dataset.k = f[0];
+      return { el: h('label', { class: 'toggle small' }, h('span', { text: f[1] }), cb), cb: cb };
+    });
+    var msg = h('div');
+    function save() {
+      clear(msg);
+      var n = { crownAnchor: ca.value.replace(/\D/g, ''), captainsClub: cc.value.replace(/\D/g, ''), state: st.value };
+      flags.forEach(function (f) { n[f.cb.dataset.k] = f.cb.checked; });
+      if ((n.crownAnchor && !/^\d{4,15}$/.test(n.crownAnchor)) || (n.captainsClub && !/^\d{4,15}$/.test(n.captainsClub))) { add(msg, errBox('Loyalty numbers are digits only.')); return; }
+      setPref('discounts', n); mem = {};
+      toast('Discounts saved – cabin prices will use them');
+    }
+    return h('div', { class: 'card' },
+      h('b', { text: '\u{1F3F7}️ Discounts for cabin prices' }),
+      h('p', { class: 'small muted', text: 'The cruise line uses these to show loyalty, residency and other special fares. Sign in under My Cruises to fill them in automatically.' }),
+      h('label', { class: 'field' }, h('span', { text: 'Crown & Anchor number (Royal Caribbean)' }), ca),
+      h('label', { class: 'field' }, h('span', { text: 'Captain\'s Club number (Celebrity)' }), cc),
+      h('label', { class: 'field' }, h('span', { text: 'State / province you live in' }), st),
+      flags.map(function (f) { return f.el; }), msg,
+      h('button', { class: 'btn block', style: 'margin-top:8px', text: 'Save discounts', onclick: save }));
+  }
 
   function webAccountSettings(v) {
     var box = h('div');
