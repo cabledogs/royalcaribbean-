@@ -174,8 +174,13 @@ final class Cruise {
         h.put("RSC", "1");
         Net.Result r = Net.request("GET", cabinUrl(o), h, null);
         if (r.status != 200) throw new Exception("Could not retrieve cabin prices (" + r.status + ")");
+        return parseCabins(r.body);
+    }
+
+    /** Same output as CruiseCore.parseCabins in core.js. */
+    static JSONArray parseCabins(String body) throws Exception {
         JSONArray out = new JSONArray();
-        JSONArray rooms = extractJsonArray(r.body, "rooms");
+        JSONArray rooms = extractJsonArray(body, "rooms");
         if (rooms == null || rooms.length() == 0) return out;
         JSONObject first = rooms.optJSONObject(0);
         JSONObject options = first == null ? null : first.optJSONObject("options");
@@ -197,13 +202,28 @@ final class Cruise {
                 boolean soldOut = left instanceof Number && ((Number) left).intValue() == 0;
                 double total = invoice != null && invoice.opt("total") instanceof Number && !soldOut ? invoice.optDouble("total") : Double.NaN;
                 String name = st.opt("name") instanceof String ? st.optString("name") : "";
-                boolean connecting = name.toLowerCase(java.util.Locale.US).contains("connect");
+                // yes/no fields Royal sets on this room type, shown in "See every room type"
+                JSONArray flags = new JSONArray();
+                boolean flagConnect = false;
+                java.util.Iterator<String> keys = st.keys();
+                while (keys.hasNext()) {
+                    String field = keys.next();
+                    if (Boolean.TRUE.equals(st.opt(field))) {
+                        flags.put(field);
+                        if (field.toLowerCase(java.util.Locale.US).contains("connect")) flagConnect = true;
+                    }
+                }
+                boolean connecting = flagConnect || name.toLowerCase(java.util.Locale.US).contains("connect");
+                Object code = st.opt("code");
+                if (!(code instanceof String)) code = st.opt("stateroomSubtypeCode");
                 JSONObject so = new JSONObject();
                 so.put("name", name);
                 so.put("price", Double.isNaN(total) ? JSONObject.NULL : (Object) Double.valueOf(total));
                 so.put("roomsLeft", left instanceof Number ? left : JSONObject.NULL);
                 so.put("guarantee", st.optBoolean("guarantee", false));
                 so.put("connecting", connecting);
+                so.put("code", code instanceof String ? code : "");
+                so.put("flags", flags);
                 subtypes.put(so);
                 if (Double.isNaN(total)) continue;
                 if (Double.isNaN(cheapest) || total < cheapest) cheapest = total;
