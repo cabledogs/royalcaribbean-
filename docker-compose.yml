@@ -1,0 +1,34 @@
+# Cruise Deals - self-hosted web version.
+# 1. cp .env.example .env   and fill it in
+# 2. docker compose up -d --build
+# Caddy gets a free HTTPS certificate for DOMAIN automatically (ports 80/443 must reach this machine).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRUST_PROXY: "1"          # Caddy sits in front and sets X-Forwarded-*
+      COOKIE_SECURE: "true"
+    volumes:
+      - ./data:/data
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

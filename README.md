@@ -19,6 +19,10 @@ scripts by jdeath. Not affiliated with Royal Caribbean Group.
 4. **My Cruises**: sign in with your cruise line account to see whether anything you already
    bought is cheaper now (rebook & save).
 
+## Docker web version (this branch)
+Multi-user web app with logins and Textbelt text alerts, safe to expose over HTTPS.
+See **[docs-docker.md](docs-docker.md)** — quick start: `cp .env.example .env`, edit, `docker compose up -d --build`.
+
 ## Install the APK
 Download `CruiseDeals.apk`, open it on your phone and allow "install unknown apps".
 Android 8.0+ required.
