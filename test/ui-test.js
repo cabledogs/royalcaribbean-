@@ -32,6 +32,7 @@ const path = require('path');
   await page.waitForSelector('#sheet:not([hidden])');
   await shot('5-alert-sheet');
   await page.click('text=Create alert');
+  await page.waitForFunction(() => window.__bg && window.__bg.background === true);
   await page.click('[data-tab=cabins]'); await page.waitForSelector('text=Balcony');
   await shot('6-cabins');
   await page.click('text=Whole group (2 cabins)');
