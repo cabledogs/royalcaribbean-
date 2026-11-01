@@ -15,6 +15,8 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
+const https = require('https');
+const zlib = require('zlib');
 
 const WWW = process.env.WWW_DIR || path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www');
 const Core = require(path.join(WWW, 'core.js'));
@@ -154,24 +156,50 @@ function allowedUrl(u) {
   } catch (e) { return false; }
 }
 
-async function upstreamOnce(method, url, headers, body) {
-  const res = await fetch(url, { method, headers, body: body || undefined, redirect: 'manual', signal: AbortSignal.timeout(30000) });
-  const reader = res.body ? res.body.getReader() : null;
-  const chunks = [];
-  let size = 0;
-  if (reader) {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.length;
-      if (size > MAX_UPSTREAM_BYTES) { reader.cancel(); throw new Error('upstream response too large'); }
-      chunks.push(value);
-    }
-  }
-  return { status: res.status, body: Buffer.concat(chunks.map(c => Buffer.from(c))).toString('utf8') };
+/*
+ * One request with node:https, sending only the headers we choose - the same shape as
+ * Python requests in the original scripts (fetch() adds browser sec-fetch-* headers that
+ * bot protection on the cruise sites can reject). Redirects are followed like requests
+ * does, but only to the allow-listed cruise-line hosts.
+ */
+function upstreamOnce(method, url, headers, body, hops) {
+  hops = hops || 0;
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const h = Object.assign({ 'Accept-Encoding': 'gzip, deflate, br', 'Connection': 'keep-alive' }, headers);
+    if (body) h['Content-Length'] = Buffer.byteLength(body);
+    const req = https.request({ method, hostname: u.hostname, path: u.pathname + u.search, headers: h, timeout: 30000 }, res => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && hops < 5) {
+        res.resume();
+        let next;
+        try { next = new URL(res.headers.location, url).toString(); } catch (e) { return reject(new Error('bad redirect')); }
+        if (!allowedUrl(next)) return resolve({ status: res.statusCode, body: 'redirect to a non cruise-line host blocked' });
+        const m = res.statusCode === 303 || ((res.statusCode === 301 || res.statusCode === 302) && method === 'POST') ? 'GET' : method;
+        return resolve(upstreamOnce(m, next, headers, m === 'GET' ? undefined : body, hops + 1));
+      }
+      const enc = String(res.headers['content-encoding'] || '').toLowerCase();
+      let stream = res;
+      if (enc === 'gzip') stream = res.pipe(zlib.createGunzip());
+      else if (enc === 'deflate') stream = res.pipe(zlib.createInflate());
+      else if (enc === 'br') stream = res.pipe(zlib.createBrotliDecompress());
+      const chunks = [];
+      let size = 0;
+      stream.on('data', c => {
+        size += c.length;
+        if (size > MAX_UPSTREAM_BYTES) { req.destroy(); reject(new Error('upstream response too large')); return; }
+        chunks.push(c);
+      });
+      stream.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      stream.on('error', reject);
+    });
+    req.on('timeout', () => req.destroy(new Error('timed out after 30s')));
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
 }
 
-/* fetch with the same retry policy as the Python scripts (retry network errors and 5xx) */
+/* same retry policy as the Python scripts: retry network errors and 5xx, not 4xx */
 async function upstream(method, url, opts) {
   opts = opts || {};
   if (!allowedUrl(url)) return { status: 0, body: 'blocked host' };
@@ -184,9 +212,13 @@ async function upstream(method, url, opts) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       last = await upstreamOnce(method, url, headers, method === 'POST' ? opts.body : undefined);
-      if (last.status < 500) return last;
+      if (last.status < 500) break;
     } catch (e) { last = { status: 0, body: String(e.message || e) }; }
-    await new Promise(r => setTimeout(r, 1000 * 2 ** attempt));
+    if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * 2 ** attempt));
+  }
+  if (last.status < 200 || last.status >= 300) {
+    const u = new URL(url);
+    log('cruise line answered', last.status || ('error: ' + last.body.slice(0, 120)), 'for', method, u.hostname + u.pathname);
   }
   return last;
 }
@@ -604,4 +636,4 @@ if (require.main === module) {
   process.on('SIGINT', stop);
 }
 
-module.exports = { server, hashPassword, verifyPassword, planCheck: scheduledCheck };
+module.exports = { server, hashPassword, verifyPassword, planCheck: scheduledCheck, upstream };
