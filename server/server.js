@@ -4,7 +4,7 @@
  *
  *  - Serves the same mobile UI as the Android app (app/src/main/assets/www)
  *  - Username/password login (scrypt hashes, HttpOnly session cookies, login rate limiting)
- *  - Per-user price alerts, checked on a schedule; text alerts through Textbelt
+ *  - Per-user price alerts, checked on a schedule; text alerts (Textbelt, Twilio or a webhook - see sms.js)
  *  - Relays cruise-line API calls for the browser (allow-listed hosts only, login required)
  *
  * Zero npm dependencies: needs Node 20+.
@@ -18,6 +18,7 @@ const crypto = require('crypto');
 
 const WWW = process.env.WWW_DIR || path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www');
 const Core = require(path.join(WWW, 'core.js'));
+const SMS = require('./sms');
 
 /* ---------------- configuration ---------------- */
 const env = process.env;
@@ -27,8 +28,8 @@ const CFG = {
   wwwDir: WWW,
   adminUser: env.ADMIN_USER || 'admin',
   adminPassword: env.ADMIN_PASSWORD || '',
+  // only used to pre-fill the SMS settings on first start; afterwards the admin page is the source of truth
   textbeltKey: env.TEXTBELT_KEY || '',
-  textbeltUrl: env.TEXTBELT_URL || 'https://textbelt.com/text',
   checkHours: Math.max(1, parseFloat(env.CHECK_INTERVAL_HOURS || '6')),
   trustProxy: /^(1|true|yes)$/i.test(env.TRUST_PROXY || ''),
   cookieSecure: (env.COOKIE_SECURE || 'auto').toLowerCase(), // auto | true | false
@@ -193,7 +194,7 @@ async function upstream(method, url, opts) {
 let upstreamHttp = upstream;
 if (env.MOCK_UPSTREAM) upstreamHttp = require(path.resolve(env.MOCK_UPSTREAM)); // tests only
 
-/* ---------------- Textbelt ---------------- */
+/* ---------------- text messages (provider chosen on the admin page) ---------------- */
 function normalizePhone(p) {
   const s = String(p || '').trim();
   if (!s) return '';
@@ -201,13 +202,31 @@ function normalizePhone(p) {
   return /^\+?\d{7,15}$/.test(digits) ? digits : null;
 }
 
+function smsConf() {
+  db.config = db.config || {};
+  if (!db.config.sms) {
+    db.config.sms = { provider: CFG.textbeltKey ? 'textbelt' : 'off', settings: { textbelt: { key: CFG.textbeltKey } }, link: '', includeLink: false };
+  }
+  db.config.sms.settings = db.config.sms.settings || {};
+  return db.config.sms;
+}
+
+function smsReady() {
+  const c = smsConf(), p = SMS.PROVIDERS[c.provider];
+  if (!p) return false;
+  const vals = c.settings[c.provider] || {};
+  return p.fields.every(f => !f.required || vals[f.key]);
+}
+
+function smsFormatOpts() {
+  const c = smsConf();
+  return { link: c.includeLink && c.link ? c.link : '' };
+}
+
 async function sendSms(phone, message) {
-  if (!CFG.textbeltKey) throw new Error('Text messages are not set up on this server (TEXTBELT_KEY).');
-  const body = new URLSearchParams({ phone, message: message.slice(0, 900), key: CFG.textbeltKey });
-  const res = await fetch(CFG.textbeltUrl, { method: 'POST', body, signal: AbortSignal.timeout(20000) });
-  const j = await res.json().catch(() => ({}));
-  if (!j.success) throw new Error('Textbelt: ' + (j.error || 'send failed'));
-  return j;
+  if (!smsReady()) throw new Error('Text messages are not set up yet - an admin can do it in Settings.');
+  const c = smsConf();
+  return SMS.PROVIDERS[c.provider].send(c.settings[c.provider] || {}, phone, message.slice(0, 1000));
 }
 
 /* ---------------- alert checking ---------------- */
@@ -223,14 +242,15 @@ function cachedHttp() {
 
 async function checkUserAlerts(name, httpFn) {
   const rec = db.users[name];
-  if (!rec || !rec.alerts || !rec.alerts.length) return { messages: [] };
-  const messages = [];
+  if (!rec || !rec.alerts || !rec.alerts.length) return { messages: [], drops: [] };
+  const messages = [], drops = [];
   const results = [];
   for (const a of rec.alerts) {
     try {
       const r = await Core.checkAlert(httpFn, a);
       results.push(r.alert);
       if (r.message) messages.push(r.message);
+      if (r.drop) drops.push(r.drop);
     } catch (e) { results.push(a); }
   }
   // merge: keep edits made while we were checking
@@ -240,13 +260,13 @@ async function checkUserAlerts(name, httpFn) {
     return done ? Object.assign(done, { target: cur.target }) : cur;
   });
   await saveDb();
-  return { messages };
+  return { messages, drops };
 }
 
-async function notifyUser(name, messages) {
+async function notifyUser(name, drops) {
   const rec = db.users[name];
-  if (!messages.length || !rec || !rec.settings || !rec.settings.smsEnabled || !rec.settings.phone) return;
-  const text = 'Cruise Deals: ' + (messages.length === 1 ? messages[0] : messages.length + ' price drops:\n- ' + messages.join('\n- '));
+  if (!drops.length || !rec || !rec.settings || !rec.settings.smsEnabled || !rec.settings.phone) return;
+  const text = SMS.formatDrops(drops, smsFormatOpts());
   try { await sendSms(rec.settings.phone, text); log('sms sent to', name); } catch (e) { log('sms failed for', name, e.message); }
 }
 
@@ -257,8 +277,8 @@ async function scheduledCheck() {
   try {
     const httpFn = cachedHttp();
     for (const name of Object.keys(db.users)) {
-      const { messages } = await checkUserAlerts(name, httpFn);
-      await notifyUser(name, messages);
+      const { drops } = await checkUserAlerts(name, httpFn);
+      await notifyUser(name, drops);
     }
     log('scheduled check finished');
   } catch (e) { log('scheduled check error', e.message); }
@@ -313,7 +333,8 @@ function readJson(req, limit) {
 
 function publicUser(name, rec) {
   return {
-    username: name, admin: !!rec.admin, smsConfigured: !!CFG.textbeltKey,
+    username: name, admin: !!rec.admin, smsConfigured: smsReady(),
+    smsProvider: smsReady() ? SMS.PROVIDERS[smsConf().provider].label : '',
     settings: { phone: (rec.settings && rec.settings.phone) || '', smsEnabled: !!(rec.settings && rec.settings.smsEnabled) }
   };
 }
@@ -381,8 +402,8 @@ async function api(req, res, url) {
     const phone = me.rec.settings && me.rec.settings.phone;
     if (!phone) return send(res, 400, { error: 'Add your mobile number first' });
     try {
-      const r = await sendSms(phone, 'Cruise Deals: test message - price alerts will look like this.');
-      return send(res, 200, { ok: true, quotaRemaining: r.quotaRemaining });
+      const r = await sendSms(phone, SMS.testMessage(smsFormatOpts()));
+      return send(res, 200, { ok: true, info: r.info, quotaRemaining: r.quotaRemaining });
     } catch (e) { return send(res, 502, { error: e.message }); }
   }
   if (p === '/api/me/password' && method === 'POST') {
@@ -396,6 +417,9 @@ async function api(req, res, url) {
     return send(res, 200, { ok: true });
   }
 
+  if (p === '/api/sms/preview' && method === 'GET') {
+    return send(res, 200, SMS.samples(smsFormatOpts()).map(x => Object.assign(x, { segments: SMS.segments(x.text), chars: x.text.length })));
+  }
   if (p === '/api/alerts' && method === 'GET') return send(res, 200, me.rec.alerts || []);
   if (p === '/api/alerts' && method === 'PUT') {
     me.rec.alerts = cleanAlerts(await readJson(req, 512 * 1024));
@@ -404,8 +428,8 @@ async function api(req, res, url) {
   }
   if (p === '/api/alerts/check' && method === 'POST') {
     if (limited('check:' + me.name, 12, 60 * 60e3)) return send(res, 429, { error: 'You can check manually 12 times an hour' });
-    const { messages } = await checkUserAlerts(me.name, cachedHttp());
-    await notifyUser(me.name, messages);
+    const { drops } = await checkUserAlerts(me.name, cachedHttp());
+    await notifyUser(me.name, drops);
     return send(res, 200, db.users[me.name].alerts);
   }
 
@@ -449,6 +473,61 @@ async function api(req, res, url) {
       await saveDb();
       log('user created', b.username, 'by', me.name);
       return send(res, 200, { ok: true });
+    }
+    if (p === '/api/admin/sms' && method === 'GET') {
+      const c = smsConf();
+      const values = {};
+      for (const [id, prov] of Object.entries(SMS.PROVIDERS)) {
+        const v = c.settings[id] || {};
+        values[id] = {};
+        for (const f of prov.fields) {
+          // secrets never leave the server: only "set" plus the last 4 characters
+          values[id][f.key] = f.secret ? (v[f.key] ? '********' + String(v[f.key]).slice(-4) : '') : (v[f.key] || '');
+        }
+      }
+      return send(res, 200, {
+        provider: c.provider, ready: smsReady(), link: c.link || '', includeLink: !!c.includeLink, values,
+        providers: Object.entries(SMS.PROVIDERS).map(([id, prov]) => ({ id, label: prov.label, help: prov.help, fields: prov.fields }))
+      });
+    }
+    if (p === '/api/admin/sms' && method === 'PUT') {
+      const b = (await readJson(req, 16384)) || {};
+      const c = smsConf();
+      if (b.provider !== 'off' && !SMS.PROVIDERS[b.provider]) return send(res, 400, { error: 'Unknown provider' });
+      const prov = SMS.PROVIDERS[b.provider];
+      if (prov) {
+        const cur = Object.assign({}, c.settings[b.provider] || {});
+        const incoming = (b.values && b.values[b.provider]) || {};
+        for (const f of prov.fields) {
+          let v = incoming[f.key];
+          if (typeof v !== 'string') continue;
+          v = v.trim().slice(0, 500);
+          if (f.secret && (v === '' || v.startsWith('********'))) continue; // keep the stored secret
+          if (/url/i.test(f.key) && v && !/^https?:\/\/[^\s]+$/i.test(v)) return send(res, 400, { error: f.label + ' must be a http(s) URL' });
+          cur[f.key] = v;
+        }
+        const missing = prov.fields.filter(f => f.required && !cur[f.key]).map(f => f.label);
+        if (missing.length) return send(res, 400, { error: 'Please fill in: ' + missing.join(', ') });
+        c.settings[b.provider] = cur;
+      }
+      const link = String(b.link || '').trim();
+      if (link && !/^https?:\/\/[^\s]+$/i.test(link)) return send(res, 400, { error: 'Link must start with https://' });
+      c.provider = b.provider;
+      c.link = link;
+      c.includeLink = !!b.includeLink && !!link;
+      await saveDb();
+      log('sms settings changed to', c.provider, 'by', me.name);
+      return send(res, 200, { ok: true, ready: smsReady() });
+    }
+    if (p === '/api/admin/sms/test' && method === 'POST') {
+      if (limited('sms-admin-test:' + me.name, 10, 60 * 60e3)) return send(res, 429, { error: 'Only 10 test texts per hour' });
+      const b = (await readJson(req, 4096)) || {};
+      const phone = normalizePhone(b.phone);
+      if (!phone) return send(res, 400, { error: 'Enter the phone number to send the test to' });
+      try {
+        const r = await sendSms(phone, SMS.testMessage(smsFormatOpts()));
+        return send(res, 200, { ok: true, info: r.info });
+      } catch (e) { return send(res, 502, { error: e.message }); }
     }
     const m = p.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (m && method === 'DELETE') {
@@ -519,7 +598,7 @@ if (require.main === module) {
   setInterval(pruneSessions, 3600e3).unref();
   setInterval(scheduledCheck, CFG.checkHours * 3600e3);
   setTimeout(scheduledCheck, 60e3).unref();
-  server.listen(CFG.port, () => log('Cruise Deals listening on :' + CFG.port + ' (alerts every ' + CFG.checkHours + 'h, SMS ' + (CFG.textbeltKey ? 'on' : 'off') + ')'));
+  server.listen(CFG.port, () => log('Cruise Deals listening on :' + CFG.port + ' (alerts every ' + CFG.checkHours + 'h, texts via ' + (smsReady() ? smsConf().provider : 'nobody yet') + ')'));
   const stop = () => { server.close(); writing.then(() => process.exit(0)); };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);

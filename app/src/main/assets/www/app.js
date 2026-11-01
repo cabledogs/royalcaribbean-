@@ -753,7 +753,7 @@
       var msg = h('div');
       add(box, h('div', { class: 'card' },
         h('b', { text: 'Text message alerts' }),
-        h('p', { class: 'small muted', text: me.smsConfigured ? 'Sent through Textbelt when one of your alerts drops in price.' : 'The server admin has not set a Textbelt key yet (TEXTBELT_KEY).' }),
+        h('p', { class: 'small muted', text: me.smsConfigured ? 'Sent through ' + me.smsProvider + ' when one of your alerts drops in price.' : 'Text messages are not set up yet' + (me.admin ? ' - choose a provider below.' : ' - ask the admin.') }),
         h('label', { class: 'field' }, h('span', { text: 'Mobile number' }), phone),
         h('label', { class: 'toggle' }, h('span', { text: 'Text me price drops' }), sms),
         msg,
@@ -765,9 +765,10 @@
           h('button', { class: 'btn ghost', text: 'Send test text', disabled: !me.smsConfigured, onclick: function () {
             clear(msg);
             P.saveSettings({ phone: phone.value.trim(), smsEnabled: sms.checked }).then(function () { return P.testSms(); })
-              .then(function (r) { toast(r && r.quotaRemaining !== undefined ? 'Sent! Texts left: ' + r.quotaRemaining : 'Sent!'); })
+              .then(function (r) { toast('Sent! ' + ((r && r.info) || '')); })
               .catch(function (e) { add(msg, errBox(e)); });
-          } }))));
+          } })),
+        h('button', { class: 'btn ghost block', style: 'margin-top:10px', text: '\u{1F4AC} See what the texts look like', onclick: showSmsPreview })));
 
       var oldP = h('input', { type: 'password', autocomplete: 'current-password' }), newP = h('input', { type: 'password', autocomplete: 'new-password', minlength: '10' });
       var pmsg = h('div');
@@ -781,8 +782,84 @@
             P.changePassword(oldP.value, newP.value).then(function () { oldP.value = newP.value = ''; toast('Password changed'); }).catch(function (e) { add(pmsg, errBox(e)); });
           } }),
           h('button', { class: 'btn danger', text: 'Sign out', onclick: function () { P.logout().then(showLogin, showLogin); } }))));
-      if (me.admin) adminUsers(box);
+      if (me.admin) { adminSms(box); adminUsers(box); }
     }).catch(function (e) { add(box, errBox(e)); });
+  }
+
+  /* phone-style preview of the texts, built by the server's real formatter */
+  function phonePreview(samples) {
+    return h('div', { class: 'phone' },
+      h('div', { class: 'phone-top' }, h('div', { class: 'phone-avatar', text: 'CD' }), h('div', { text: 'Cruise Deals alerts' })),
+      h('div', { class: 'phone-body' }, samples.map(function (x) {
+        return h('div', null,
+          h('div', { class: 'bubble-label', text: x.label }),
+          h('div', { class: 'bubble', text: x.text }),
+          h('div', { class: 'bubble-meta', text: x.chars + ' characters · ' + x.segments + ' text' + (x.segments > 1 ? 's' : '') + ' billed' }));
+      })));
+  }
+  function showSmsPreview() {
+    P.smsPreview().then(function (samples) {
+      openSheet([h('h3', { text: 'What the texts look like' }),
+        h('div', { class: 'small muted', text: 'Examples with sample prices. Real texts use your alerts.' }), phonePreview(samples)]);
+    }).catch(function (e) { toast(e.message); });
+  }
+
+  function adminSms(box) {
+    var card = h('div', { class: 'card' });
+    add(box, card);
+    P.getSmsAdmin().then(function (c) {
+      var provSel = h('select', null, [h('option', { value: 'off', text: 'Off (no texts)' })].concat(c.providers.map(function (p) {
+        return h('option', { value: p.id, text: p.label });
+      })));
+      provSel.value = c.provider;
+      var fieldsBox = h('div'), inputs = {};
+      var link = h('input', { type: 'url', placeholder: 'https://cruise.example.com', value: c.link });
+      var incLink = h('input', { type: 'checkbox', checked: c.includeLink });
+      var testPhone = h('input', { type: 'tel', placeholder: '+15551234567' });
+      var msg = h('div'), status = h('span', { class: 'pill ' + (c.ready ? 'ok' : 'warn'), text: c.ready ? 'Working setup' : 'Not set up' });
+      function drawFields() {
+        clear(fieldsBox); inputs = {};
+        var p = c.providers.filter(function (x) { return x.id === provSel.value; })[0];
+        if (!p) return;
+        add(fieldsBox, h('p', { class: 'small muted', text: p.help }));
+        p.fields.forEach(function (f) {
+          var cur = (c.values[p.id] || {})[f.key] || '';
+          var inp = h('input', { type: f.secret ? 'password' : 'text', autocomplete: 'off', placeholder: f.secret && cur ? 'saved (' + cur.slice(-4) + ') - type to replace' : (f.placeholder || ''), value: f.secret ? '' : cur });
+          inputs[f.key] = inp;
+          add(fieldsBox, h('label', { class: 'field' }, h('span', { text: f.label + (f.required ? '' : '') }), inp));
+        });
+      }
+      provSel.onchange = drawFields;
+      drawFields();
+      function collect() {
+        var values = {}; values[provSel.value] = {};
+        Object.keys(inputs).forEach(function (k) { values[provSel.value][k] = inputs[k].value; });
+        return { provider: provSel.value, values: values, link: link.value.trim(), includeLink: incLink.checked };
+      }
+      add(card, [
+        h('div', { class: 'row' }, h('b', { class: 'grow', text: '\u{1F4E8} Text message provider (admin)' }), status),
+        h('label', { class: 'field', style: 'margin-top:10px' }, h('span', { text: 'Send texts with' }), provSel),
+        fieldsBox,
+        h('label', { class: 'field' }, h('span', { text: 'This site\'s address (for a link in texts)' }), link),
+        h('label', { class: 'toggle small' }, h('span', { text: 'Add the link to the end of each text' }), incLink),
+        msg,
+        h('button', { class: 'btn block', text: 'Save provider settings', onclick: function () {
+          clear(msg);
+          P.saveSmsAdmin(collect()).then(function (r) {
+            status.className = 'pill ' + (r.ready ? 'ok' : 'warn'); status.textContent = r.ready ? 'Working setup' : 'Not set up';
+            toast('Saved'); adminRefresh();
+          }).catch(function (e) { add(msg, errBox(e)); });
+        } }),
+        h('div', { class: 'row', style: 'margin-top:10px' }, h('label', { class: 'field grow', style: 'margin:0' }, testPhone),
+          h('button', { class: 'btn ghost', text: 'Send test', onclick: function () {
+            clear(msg);
+            P.saveSmsAdmin(collect()).then(function () { return P.testSmsAdmin(testPhone.value); })
+              .then(function (r) { toast(r.info || 'Sent!'); }).catch(function (e) { add(msg, errBox(e)); });
+          } })),
+        h('button', { class: 'btn ghost block', style: 'margin-top:10px', text: '\u{1F4AC} Preview the texts', onclick: showSmsPreview })
+      ]);
+      function adminRefresh() { P.getSmsAdmin().then(function (n) { c = n; drawFields(); }); }
+    }).catch(function (e) { add(card, errBox(e)); });
   }
 
   function adminUsers(box) {

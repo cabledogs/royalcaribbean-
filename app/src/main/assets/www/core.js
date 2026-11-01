@@ -413,15 +413,20 @@
     var threshold = (a.target !== null && a.target !== undefined && a.target !== '') ? Number(a.target) : Number(a.initialPrice);
     var hit = a.target ? current <= threshold : current < threshold;
     a.status = hit ? 'dropped' : 'watching';
-    var message = null;
+    var message = null, drop = null;
     if (hit && (a.notifiedPrice === null || a.notifiedPrice === undefined || current < a.notifiedPrice)) {
       a.notifiedPrice = current;
+      drop = {
+        title: a.title, current: current, previous: previous === undefined ? null : previous, initial: a.initialPrice,
+        target: a.target || null, currency: a.currency, unit: a.unit || '', shipName: a.shipName || a.ship || '',
+        sailDate: a.sailDate, day: a.day, port: a.port || '', type: a.type
+      };
       message = 'Price drop: ' + a.title + ' is now ' + fmtMoney(current, a.currency) +
         (previous !== null && previous !== undefined && previous !== current ? ' (was ' + fmtMoney(previous, a.currency) + ')' : '') +
         ' - ' + (a.shipName || a.ship || '') + ' ' + fmtSailDate(a.sailDate);
     }
     if (!hit) a.notifiedPrice = null; // re-arm once it goes back up
-    return { alert: a, message: message };
+    return { alert: a, message: message, drop: drop };
   }
 
   function fmtMoney(n, currency) {

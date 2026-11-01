@@ -6,8 +6,14 @@ can use it from any phone browser — each with their own login, alerts and text
 ## What you get
 - **Accounts**: the admin adds users in *Settings → Users*. No public sign-up.
 - **Price alerts per user**, checked on a schedule (default every 6 h) and on demand.
-- **Text alerts via [Textbelt](https://textbelt.com)**: each user adds their mobile number in Settings
-  and taps *Send test text*. One combined text per check run, and no repeat text for the same price.
+- **Text alerts**: the admin picks the provider in *Settings → Text message provider* —
+  **Textbelt**, **Twilio**, or a **Webhook** (JSON `{"to","message"}` to any other SMS service, Home Assistant, n8n…).
+  Keys can be changed any time without a restart and are never shown back in the browser.
+  Each user adds their mobile number in Settings. One combined text per check, no repeat text for the same price.
+  *See what the texts look like* shows a phone preview built by the real formatter
+  (examples: [text-alert-examples.png](text-alert-examples.png)).
+- **Adding another provider later** = one entry in `server/sms.js` (label, settings fields, `send()`);
+  the admin form builds itself from it.
 - **Add to Home Screen** works (installable web app).
 
 ## Run it at home, reachable from the internet
@@ -16,7 +22,7 @@ can use it from any phone browser — each with their own login, alerts and text
 2. Configure:
    ```bash
    cp .env.example .env
-   nano .env        # DOMAIN, ADMIN_PASSWORD (10+ chars), TEXTBELT_KEY
+   nano .env        # DOMAIN, ADMIN_PASSWORD (10+ chars); TEXTBELT_KEY optional (can be set in the app)
    ```
 3. Start:
    ```bash
@@ -45,7 +51,7 @@ If you put it behind another proxy that terminates HTTPS, also set `TRUST_PROXY=
 | Variable | Default | Meaning |
 |---|---|---|
 | `ADMIN_USER` / `ADMIN_PASSWORD` | admin / random (printed in log) | first admin, created on first start only |
-| `TEXTBELT_KEY` | – | Textbelt API key; blank disables texts |
+| `TEXTBELT_KEY` | – | optional: pre-fills Textbelt on first start (then manage it in Settings) |
 | `CHECK_INTERVAL_HOURS` | 6 | scheduled alert checks |
 | `SESSION_DAYS` | 30 | how long a sign-in lasts |
 | `MAX_ALERTS_PER_USER` | 200 | |
