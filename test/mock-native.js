@@ -44,8 +44,8 @@
       var a = JSON.parse(alerts); a.forEach(function (x) { x.lastPrice = x.initialPrice - 10; x.status = 'dropped'; x.lastChecked = new Date().toISOString(); });
       alerts = JSON.stringify(a); setTimeout(function () { window.__nativeCb(id, 200, alerts); }, 20);
     },
-    getBackgroundSettings: function () { return '{"background":false,"hours":12}'; },
-    setBackgroundChecks: function () {},
+    getBackgroundSettings: function () { return JSON.stringify(window.__bg || { background: false, hours: 12 }); },
+    setBackgroundChecks: function (on, hours) { window.__bg = { background: on, hours: hours }; },
     openUrl: function (u) { window.__opened = u; }
   };
 })();

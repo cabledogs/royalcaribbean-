@@ -123,6 +123,10 @@
           a.target = target;
           a.notifiedPrice = null;
           saveAlerts(); closeSheet(); if (bellBtn) bellBtn.classList.add('on');
+          // Android: alerts only help if the phone checks on its own, so switch background checks on with the first alert
+          if (P.features.background === true) P.getSettings().then(function (st) {
+            if (!st.background) { P.saveSettings({ background: true, hours: st.hours || 12 }); toast('Alert set - your phone will check every ' + (st.hours || 12) + ' hours and notify you'); }
+          });
           toast(target ? 'We\'ll alert you at ' + money(target, a.currency) + ' or less' : 'We\'ll alert you on any price drop');
         } }))
     ]);
@@ -591,7 +595,7 @@
         var hrs = h('select', null, [3, 6, 12, 24].map(function (n) { return h('option', { value: n, selected: (s.hours || 12) === n, text: 'Every ' + n + ' hours' }); }));
         var save = function () { P.saveSettings({ background: on.checked, hours: hrs.value }); toast(on.checked ? 'Background checks on' : 'Background checks off'); };
         on.onchange = hrs.onchange = save;
-        add(settingsEl, h('div', { class: 'card' }, h('label', { class: 'toggle' }, h('div', null, h('b', { text: 'Check automatically' }), h('div', { class: 'small muted', text: 'Get a notification when a price drops.' })), on),
+        add(settingsEl, h('div', { class: 'card' }, h('label', { class: 'toggle' }, h('div', null, h('b', { text: 'Check automatically' }), h('div', { class: 'small muted', text: 'Your phone checks your alerts and shows a notification when a price drops. Turns on with your first alert.' })), on),
           h('label', { class: 'field', style: 'margin:8px 0 0' }, h('span', { text: 'How often' }), hrs)));
       });
     } else if (P.features.background === 'server') {
