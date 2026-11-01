@@ -34,7 +34,11 @@
     cabinPrices: function (id, opts) {
       var o = JSON.parse(opts), n = o.adults + o.children, f = (1 + 0.35 * (n - 2)) * (o.loyaltyNumber ? 0.9 : 1) * (o.state === 'FL' ? 0.95 : 1);
       (window.__cabinOpts = window.__cabinOpts || []).push(o);
-      function row(name, p, cp) { return { name: name, price: p === null ? null : Math.round(p * f), connectingPrice: cp ? Math.round(cp * f) : null, connectingName: cp ? name + ' Connecting' : '' }; }
+      function row(name, p, cp) {
+        var subs = [{ name: name, code: name.slice(0, 1), price: p === null ? null : Math.round(p * f), roomsLeft: 9, guarantee: false, connecting: false, flags: [] }];
+        if (cp) subs.push({ name: name + ' Connecting', code: 'C' + name.slice(0, 1), price: Math.round(cp * f), roomsLeft: 2, guarantee: false, connecting: true, flags: [] });
+        return { name: name, price: p === null ? null : Math.round(p * f), connectingPrice: cp ? Math.round(cp * f) : null, connectingName: cp ? name + ' Connecting' : '', subtypes: subs };
+      }
       var rows = n > 4 ? [row('Suite', 5200, null)] : [row('Interior', 1499.5, 1650), row('Ocean View', 1899, null), row('Balcony', 2399, 2550), row('Suite', null, null)];
       setTimeout(function () { window.__nativeCb(id, 200, JSON.stringify(rows)); }, 20);
     },

@@ -318,8 +318,12 @@
         var total = st.pricing && st.pricing.invoice && st.pricing.invoice.total;
         var name = typeof st.name === 'string' ? st.name : '';
         var price = typeof total === 'number' && st.roomsLeft !== 0 ? total : null;
-        var connecting = /connect/i.test(name);
-        subtypes.push({ name: name, price: price, roomsLeft: typeof st.roomsLeft === 'number' ? st.roomsLeft : null, guarantee: !!st.guarantee, connecting: connecting });
+        // yes/no fields Royal sets on this room type (e.g. guarantee) - kept so "See every room type" can show them
+        var flags = Object.keys(st).filter(function (k) { return st[k] === true; });
+        var code = st.code || st.stateroomSubtypeCode || '';
+        var connecting = /connect/i.test(name) || flags.some(function (k) { return /connect/i.test(k); });
+        subtypes.push({ name: name, code: typeof code === 'string' ? code : '', price: price, roomsLeft: typeof st.roomsLeft === 'number' ? st.roomsLeft : null,
+          guarantee: !!st.guarantee, connecting: connecting, flags: flags });
         if (price === null) return;
         if (cheapest === null || price < cheapest) cheapest = price;
         if (connecting && (conn === null || price < conn)) { conn = price; connName = name; }

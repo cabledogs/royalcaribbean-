@@ -374,7 +374,7 @@
         }
         function resultRow(r, i) {
           var n = f.adults + f.children;
-          var others = r.byType.filter(function (t) { return t !== r.pick; }).slice(0, 3);
+          var others = r.byType.filter(function (t) { return t !== r.pick; }).slice(0, 4);
           return h('button', { class: 'item', style: 'align-items:flex-start', onclick: function () {
             setPref('cabinMode', f.rooms > 1 ? 'group' : 'one');
             setPref('group', { adults: f.adults, children: f.children, maxPer: f.maxPer, connecting: connecting, rooms: Math.max(2, f.rooms) });
@@ -391,7 +391,8 @@
                 var p = c.adults + ' adult' + (c.adults > 1 ? 's' : '') + (c.children ? ' + ' + c.children + ' kid' + (c.children > 1 ? 's' : '') : '');
                 return (r.pick.best.cabins.length > 1 ? 'Room ' + (k + 1) + ': ' : '') + p;
               }).join(' \u00b7 ')),
-              others.length ? h('div', { class: 's', text: others.map(function (t) { return t.name + ' ' + money(t.best.total); }).join(' · ') }) : null),
+              others.length ? h('div', { class: 's', text: others.map(function (t) { return t.name + ' ' + money(t.best.total); }).join(' · ') }) : null,
+              r.missing.length ? h('div', { class: 's', text: r.missing.join(', ') + ': ' + (connecting ? 'no connecting rooms' : 'nothing that fits') }) : null),
             h('div', { class: 'price' }, h('b', { text: money(r.total) }), h('span', { class: 'u', text: money(r.total / n) + ' pp' })));
         }
         function worker() {
@@ -405,10 +406,12 @@
             return api.cabins(opts).then(function (rows) { table[o.adults + '/' + o.children] = rows; }, function () { table[o.adults + '/' + o.children] = []; });
           })).then(function () {
             if (!alive()) return;
-            var combos = Core.bestCombos(table, splits, connecting).filter(function (x) { return x.best && x.best.cabins.length === f.rooms; });
+            var allTypes = Core.bestCombos(table, splits, connecting);
+            var combos = allTypes.filter(function (x) { return x.best && x.best.cabins.length === f.rooms; });
+            var missing = allTypes.filter(function (x) { return combos.indexOf(x) < 0; }).map(function (x) { return x.name; });
             combos.sort(function (a, b) { return a.best.total - b.best.total; });
             var wanted = f.cabin === 'any' ? combos : combos.filter(function (x) { return cabinTypeOf(x.name) === f.cabin; });
-            if (wanted.length) results.push({ ship: c.ship, sailing: c.sailing, total: wanted[0].best.total, pick: wanted[0], byType: combos });
+            if (wanted.length) results.push({ ship: c.ship, sailing: c.sailing, total: wanted[0].best.total, pick: wanted[0], byType: combos, missing: missing });
             else soldOut++;
           }).then(function () { done++; if (alive()) { tick(); draw(); } return worker(); });
         }
@@ -613,7 +616,34 @@
             h('div', { class: 'price' }, c.price === null ? h('span', { class: 'pill warn', text: 'Sold out' }) : [saving ? h('s', { text: money(publicPrice, opts.currency) }) : null, h('b', { text: money(c.price, opts.currency) }), h('span', { class: 'u', text: hasDisc ? 'your price' : 'total' })]),
             bell);
         })));
+        add(out, h('button', { class: 'btn ghost block', text: '\u{1F50D} See every room type', onclick: function () { roomTypesSheet(cabins, opts); } }));
       }).catch(function (e) { if (alive()) { clear(out); add(out, errBox(e)); } });
+    }
+    function roomTypesSheet(cabins, opts) {
+      var lines = [];
+      var body = cabins.map(function (c) {
+        var subs = c.subtypes || [];
+        lines.push(c.name + ':');
+        return h('div', null,
+          h('div', { class: 'cat-h' }, h('b', { text: c.name }), h('span', { class: 'small muted', text: subs.length + ' room type' + (subs.length === 1 ? '' : 's') })),
+          h('div', { class: 'list', style: 'box-shadow:none;border:1px solid var(--line)' }, subs.length ? subs.map(function (st) {
+            lines.push('  ' + st.name + (st.code ? ' [' + st.code + ']' : '') + ' | ' + (st.price === null ? 'n/a' : st.price) + ' | left ' + (st.roomsLeft === null ? '?' : st.roomsLeft) +
+              ' | ' + (st.connecting ? 'CONNECTING ' : '') + (st.flags && st.flags.length ? 'flags: ' + st.flags.join(',') : ''));
+            return h('div', { class: 'prod' },
+              h('div', { class: 'grow' }, h('div', { class: 't', text: (st.connecting ? '\u{1F6AA} ' : '') + (st.name || '(no name)') }),
+                h('div', { class: 'v', text: [st.code, st.roomsLeft !== null ? st.roomsLeft + ' left' : '', st.guarantee ? 'guarantee (GTY)' : '', st.connecting ? 'connecting' : ''].filter(Boolean).join(' \u00b7 ') })),
+              h('div', { class: 'price' }, st.price === null ? h('span', { class: 'pill warn', text: 'n/a' }) : h('b', { text: money(st.price, opts.currency) })));
+          }) : h('div', { class: 'prod small muted', text: 'No room types returned' })));
+      });
+      var copyBtn = h('button', { class: 'btn ghost block', text: '\u{1F4CB} Copy details (to send for help)', onclick: function () {
+        var text = ship.name + ' ' + sailing.date + ' (' + who(party.adults, party.children) + ')\n' + lines.join('\n');
+        var ta = h('textarea', { style: 'position:fixed;opacity:0' }); ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); toast('Copied - paste it into a message'); } catch (e) { toast('Could not copy'); }
+        document.body.removeChild(ta);
+      } });
+      openSheet([h('h3', { text: 'Every room type on this sailing' }),
+        h('div', { class: 'small muted', text: '\u{1F6AA} = connecting (a door to the next cabin). Prices for ' + who(party.adults, party.children) + '.' }),
+        body, h('div', { style: 'height:10px' }), copyBtn]);
     }
     function loadGroup() {
       var splits = Core.planSplits(group.adults, group.children, group.maxPer, group.rooms).filter(function (sp) { return sp.length === group.rooms; });
