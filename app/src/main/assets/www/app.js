@@ -186,6 +186,11 @@
   views.explore = function (v) {
     var brand = pref('brand', 'all'), q = '';
     var recent = pref('recent', []);
+    add(v, h('button', { class: 'finder-cta', onclick: function () { go('finder'); } },
+      h('span', { class: 'e', text: '\u{1F50E}' }),
+      h('div', { class: 'grow' }, h('b', { text: 'Find the cheapest cruise' }),
+        h('div', { class: 'small', text: 'By ship class (Icon, Oasis\u2026), group size, connecting rooms and length' })),
+      h('span', { class: 'chev', text: '\u203a' })));
     add(v, steps(0));
     if (recent.length) {
       add(v, h('h2', { text: 'Recently viewed' }));
@@ -224,6 +229,193 @@
     api.ships().then(function (s) { ships = s; draw(); }).catch(function (e) {
       clear(list); add(list, [errBox(e), h('button', { class: 'btn block', text: 'Try again', onclick: render })]);
     });
+  };
+
+  /* ================= Cheapest cruise finder ================= */
+  var LENGTHS = [['short', '2-5 nights', 2, 5], ['week', '6-8 nights', 6, 8], ['long', '9+ nights', 9, 99]];
+  var CABIN_TYPES = [['any', 'Any'], ['interior', 'Inside'], ['ocean', 'Ocean View'], ['balcony', 'Balcony'], ['suite', 'Suite']];
+  function cabinTypeOf(name) {
+    var n = String(name || '').toLowerCase();
+    if (/suite/.test(n)) return 'suite';
+    if (/balcon/.test(n)) return 'balcony';
+    if (/ocean|outside|oceanview|porthole/.test(n)) return 'ocean';
+    if (/interior|inside/.test(n)) return 'interior';
+    return 'other';
+  }
+  function monthKey(d) { return d.getFullYear() * 100 + d.getMonth() + 1; }
+  function monthOptions() {
+    var out = [], d = new Date(); d.setDate(1);
+    for (var i = 0; i < 24; i++) { out.push({ key: monthKey(d), label: d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) }); d.setMonth(d.getMonth() + 1); }
+    return out;
+  }
+
+  views.finder = function (v) {
+    setTitle('Find the cheapest cruise', 'Every matching sailing, cheapest first');
+    var months = monthOptions();
+    var f = pref('finder', null) || { classes: ['icon', 'oasis'], adults: 4, children: 2, rooms: 2, maxPer: 4, connecting: true, lengths: ['short', 'week'], from: months[0].key, to: months[5].key, cabin: 'any', skipShips: [] };
+    if (!months.some(function (m) { return m.key === f.from; })) f.from = months[0].key;
+    if (!months.some(function (m) { return m.key === f.to; })) f.to = months[Math.min(5, months.length - 1)].key;
+    function save() { setPref('finder', f); }
+
+    var form = h('div'), out = h('div');
+    add(v, [form, out]);
+    var allShips = [];
+
+    function chipToggle(list, id) { var i = list.indexOf(id); if (i >= 0) list.splice(i, 1); else list.push(id); save(); }
+    function stepper(label, key, min, max, after) {
+      var val = h('b', { text: f[key] });
+      function set(n) { f[key] = n; val.textContent = n; save(); if (after) after(); }
+      return h('div', { class: 'row', style: 'justify-content:space-between;padding:6px 0' }, h('span', { text: label }),
+        h('div', { class: 'stepper' },
+          h('button', { 'aria-label': 'Fewer ' + label, text: '−', onclick: function () { if (f[key] > min) set(f[key] - 1); } }), val,
+          h('button', { 'aria-label': 'More ' + label, text: '+', onclick: function () { if (f[key] < max) set(f[key] + 1); } })));
+    }
+
+    function drawForm() {
+      clear(form);
+      /* ship classes */
+      var classChips = h('div', { class: 'chips wrap' });
+      Core.SHIP_CLASSES.forEach(function (c) {
+        add(classChips, h('button', { class: 'chip' + (f.classes.indexOf(c.id) >= 0 ? ' on' : ''), text: c.name.replace('Celebrity ', 'Celebrity '), onclick: function () { chipToggle(f.classes, c.id); drawForm(); } }));
+      });
+      var shipChips = h('div', { class: 'chips wrap' });
+      var inClass = allShips.filter(function (sh) { return f.classes.indexOf(Core.shipClass(sh.name)) >= 0; });
+      inClass.forEach(function (sh) {
+        var on = f.skipShips.indexOf(sh.code) < 0;
+        add(shipChips, h('button', { class: 'chip small-chip' + (on ? ' on' : ''), text: (on ? '✓ ' : '') + sh.name.replace(' of the Seas', '').replace('Celebrity ', ''), onclick: function () { chipToggle(f.skipShips, sh.code); drawForm(); } }));
+      });
+      add(form, h('div', { class: 'card' }, h('b', { text: '1. Ship class' }), classChips,
+        allShips.length ? (inClass.length ? h('div', { class: 'small muted', style: 'margin-top:6px', text: 'Ships included (tap to leave one out):' }) : h('div', { class: 'small muted', text: 'Pick at least one class.' })) : h('div', { class: 'small muted', text: 'Loading ships…' }),
+        shipChips));
+
+      /* party + rooms */
+      var conn = h('input', { type: 'checkbox', checked: f.connecting, disabled: f.rooms < 2 });
+      conn.onchange = function () { f.connecting = conn.checked; save(); };
+      var roomSeg = h('div', { class: 'chips', style: 'padding:4px 0' });
+      [1, 2, 3].forEach(function (n) {
+        add(roomSeg, h('button', { class: 'chip' + (f.rooms === n ? ' on' : ''), text: n + ' room' + (n > 1 ? 's' : ''), onclick: function () { f.rooms = n; save(); drawForm(); } }));
+      });
+      add(form, h('div', { class: 'card' }, h('b', { text: '2. Who\'s going' }),
+        stepper('Adults', 'adults', 1, 12), stepper('Children', 'children', 0, 10),
+        h('div', { class: 'small muted', style: 'margin-top:8px', text: 'Rooms' }), roomSeg,
+        stepper('Max guests per room', 'maxPer', 2, 6),
+        h('label', { class: 'toggle' }, h('div', null, h('span', { text: 'Connecting rooms only' }), h('div', { class: 'small muted', text: f.rooms < 2 ? 'Pick 2 or 3 rooms to use this' : 'Rooms with a door between them' })), conn)));
+
+      /* length + dates + cabin */
+      var lenChips = h('div', { class: 'chips wrap' });
+      LENGTHS.forEach(function (l) {
+        add(lenChips, h('button', { class: 'chip' + (f.lengths.indexOf(l[0]) >= 0 ? ' on' : ''), text: l[1], onclick: function () { chipToggle(f.lengths, l[0]); drawForm(); } }));
+      });
+      var from = h('select', null, months.map(function (m) { return h('option', { value: m.key, selected: m.key === f.from, text: m.label }); }));
+      var to = h('select', null, months.map(function (m) { return h('option', { value: m.key, selected: m.key === f.to, text: m.label }); }));
+      from.onchange = function () { f.from = +from.value; if (f.to < f.from) f.to = f.from; save(); drawForm(); };
+      to.onchange = function () { f.to = +to.value; if (f.to < f.from) f.from = f.to; save(); drawForm(); };
+      var cabChips = h('div', { class: 'chips wrap' });
+      CABIN_TYPES.forEach(function (c) {
+        add(cabChips, h('button', { class: 'chip' + (f.cabin === c[0] ? ' on' : ''), text: c[1], onclick: function () { f.cabin = c[0]; save(); drawForm(); } }));
+      });
+      add(form, h('div', { class: 'card' }, h('b', { text: '3. Cruise length & dates' }), lenChips,
+        h('div', { class: 'row', style: 'margin-top:8px' },
+          h('label', { class: 'field grow', style: 'margin:0' }, h('span', { text: 'From' }), from),
+          h('label', { class: 'field grow', style: 'margin:0' }, h('span', { text: 'To' }), to)),
+        h('div', { style: 'height:10px' }), h('b', { text: '4. Cabin type' }), cabChips));
+
+      var msg = h('div');
+      add(form, [msg, h('button', { class: 'btn block', text: '\u{1F50E} Find the cheapest cruises', onclick: function () { clear(msg); run(msg); } })]);
+    }
+
+    api.ships().then(function (sh) { allShips = sh; drawForm(); }).catch(function (e) { add(out, errBox(e)); });
+    drawForm();
+
+    var runSeq = 0;
+    function run(msg) {
+      var my = ++runSeq;
+      var alive = function () { return my === runSeq && document.body.contains(out); };
+      var splits = Core.planSplits(f.adults, f.children, f.maxPer, f.rooms).filter(function (sp) { return sp.length === f.rooms; });
+      if (!f.classes.length) { add(msg, errBox('Pick at least one ship class.')); return; }
+      if (!f.lengths.length) { add(msg, errBox('Pick at least one cruise length.')); return; }
+      if (!splits.length) { add(msg, errBox('That group doesn\'t fit in ' + f.rooms + ' room' + (f.rooms > 1 ? 's' : '') + ' of up to ' + f.maxPer + ' (each room needs an adult). Change rooms or max guests per room.')); return; }
+      var ships = allShips.filter(function (sh) { return f.classes.indexOf(Core.shipClass(sh.name)) >= 0 && f.skipShips.indexOf(sh.code) < 0; });
+      if (!ships.length) { add(msg, errBox('No ships selected.')); return; }
+      var connecting = f.connecting && f.rooms > 1;
+      var occ = Core.occupanciesFor(splits);
+
+      clear(out);
+      var status = h('div', { class: 'progress' }, h('span', { class: 'spin' }), 'Finding sailings on ' + ships.length + ' ships…');
+      var stopBtn = h('button', { class: 'btn ghost block', text: 'Stop searching', onclick: function () { runSeq++; stopBtn.hidden = true; clear(status); add(status, 'Stopped.'); } });
+      var listEl = h('div');
+      add(out, [h('h2', { text: 'Results' }), status, stopBtn, listEl]);
+      out.scrollIntoView({ behavior: 'smooth' });
+
+      Promise.all(ships.map(function (sh) {
+        return api.sailings(sh.code).then(function (ss) { return ss.map(function (x) { return { ship: sh, sailing: x }; }); }, function () { return []; });
+      })).then(function (lists) {
+        if (!alive()) return;
+        var cands = [].concat.apply([], lists).filter(function (c) {
+          var mk = monthKey(Core.sailDateObj(c.sailing.date));
+          var okLen = LENGTHS.some(function (l) { return f.lengths.indexOf(l[0]) >= 0 && c.sailing.duration >= l[2] && c.sailing.duration <= l[3]; });
+          return okLen && mk >= f.from && mk <= f.to && Core.sailDateObj(c.sailing.date) > new Date();
+        }).sort(function (a, b) { return a.sailing.date < b.sailing.date ? -1 : 1; });
+        if (!cands.length) { clear(status); stopBtn.hidden = true; add(listEl, empty('\u{1F6A2}', 'No sailings match', 'Try more months, another length or more ship classes.')); return; }
+        var MAX = 150;
+        if (cands.length > MAX) cands = cands.slice(0, MAX);
+        var total = cands.length, done = 0, results = [], soldOut = 0, idx = 0;
+        function tick() {
+          clear(status);
+          if (done < total) add(status, [h('span', { class: 'spin' }), 'Pricing ' + done + ' of ' + total + ' sailings… (' + occ.length + ' price check' + (occ.length > 1 ? 's' : '') + ' each, cheapest shown so far)']);
+          else { stopBtn.hidden = true; add(status, 'Checked ' + total + ' sailings' + (soldOut ? ' · ' + soldOut + ' had nothing that fits' : '') + '.'); }
+        }
+        function draw() {
+          clear(listEl);
+          results.sort(function (a, b) { return a.total - b.total; });
+          if (!results.length && done === total) { add(listEl, empty('\u{1F6AB}', connecting ? 'No sailings with connecting rooms that fit your group' : 'No sailings with rooms that fit your group', connecting ? 'Try turning off "Connecting rooms only" or another cabin type.' : 'Try other dates or cabin type.')); return; }
+          add(listEl, h('div', { class: 'list' }, results.slice(0, 40).map(function (r, i) { return resultRow(r, i); })));
+          if (results.length > 40) add(listEl, h('div', { class: 'notice', text: '+ ' + (results.length - 40) + ' more sailings (more expensive).' }));
+        }
+        function resultRow(r, i) {
+          var n = f.adults + f.children;
+          var others = r.byType.filter(function (t) { return t !== r.pick; }).slice(0, 3);
+          return h('button', { class: 'item', style: 'align-items:flex-start', onclick: function () {
+            setPref('cabinMode', f.rooms > 1 ? 'group' : 'one');
+            setPref('group', { adults: f.adults, children: f.children, maxPer: f.maxPer, connecting: connecting, rooms: Math.max(2, f.rooms) });
+            if (f.rooms === 1) setPref('party', { adults: f.adults, children: f.children });
+            go('sailing', { ship: r.ship, sailing: r.sailing, tab: 'cabins' });
+          } },
+            h('div', { class: 'rank', text: i + 1 }),
+            h('div', { class: 'grow' },
+              h('div', { class: 't', text: r.ship.name }),
+              h('div', { class: 's', text: Core.fmtSailDate(r.sailing.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + r.sailing.duration + ' nights' }),
+              h('div', { class: 's', text: r.sailing.description }),
+              h('div', { class: 's', style: 'color:var(--text);font-weight:600' }, (r.pick.best.connecting ? '\u{1F6AA} ' + r.pick.best.cabins.length + ' connecting ' : r.pick.best.cabins.length > 1 ? r.pick.best.cabins.length + ' x ' : '') + r.pick.name),
+              h('div', { class: 's', style: 'color:var(--text)' }, r.pick.best.cabins.map(function (c, k) {
+                var p = c.adults + ' adult' + (c.adults > 1 ? 's' : '') + (c.children ? ' + ' + c.children + ' kid' + (c.children > 1 ? 's' : '') : '');
+                return (r.pick.best.cabins.length > 1 ? 'Room ' + (k + 1) + ': ' : '') + p;
+              }).join(' \u00b7 ')),
+              others.length ? h('div', { class: 's', text: others.map(function (t) { return t.name + ' ' + money(t.best.total); }).join(' · ') }) : null),
+            h('div', { class: 'price' }, h('b', { text: money(r.total) }), h('span', { class: 'u', text: money(r.total / n) + ' pp' })));
+        }
+        function worker() {
+          if (idx >= cands.length || !alive()) return Promise.resolve();
+          var c = cands[idx++];
+          var table = {};
+          var disc = Core.discountOpts(discounts(), c.ship.name);
+          return Promise.all(occ.map(function (o) {
+            var opts = { packageCode: c.ship.code + c.sailing.voyageCode, sailDate: c.sailing.date, currency: currency(), adults: o.adults, children: o.children, host: Core.brandHost(c.ship.name) };
+            for (var k in disc) opts[k] = disc[k];
+            return api.cabins(opts).then(function (rows) { table[o.adults + '/' + o.children] = rows; }, function () { table[o.adults + '/' + o.children] = []; });
+          })).then(function () {
+            if (!alive()) return;
+            var combos = Core.bestCombos(table, splits, connecting).filter(function (x) { return x.best && x.best.cabins.length === f.rooms; });
+            combos.sort(function (a, b) { return a.best.total - b.best.total; });
+            var wanted = f.cabin === 'any' ? combos : combos.filter(function (x) { return cabinTypeOf(x.name) === f.cabin; });
+            if (wanted.length) results.push({ ship: c.ship, sailing: c.sailing, total: wanted[0].best.total, pick: wanted[0], byType: combos });
+            else soldOut++;
+          }).then(function () { done++; if (alive()) { tick(); draw(); } return worker(); });
+        }
+        tick();
+        Promise.all([worker(), worker(), worker()]);
+      });
+    }
   };
 
   /* ================= Ship: sail date picker ================= */
@@ -336,11 +528,12 @@
   function cabinsTab(body, ship, sailing, alive) {
     var mode = pref('cabinMode', 'one');
     var party = pref('party', { adults: 2, children: 0 });
-    var group = pref('group', { adults: 4, children: 2, maxPer: 4, connecting: true });
+    var group = pref('group', { adults: 4, children: 2, maxPer: 4, connecting: true, rooms: 2 });
+    if (!group.rooms) group.rooms = 2;
     var chips = h('div', { class: 'chips', style: 'padding-top:0' });
     var form = h('div'), out = h('div');
     add(body, [chips, form, out]);
-    [['one', 'One cabin'], ['group', 'Whole group (2 cabins)']].forEach(function (c) {
+    [['one', 'One cabin'], ['group', 'Whole group (2-3 rooms)']].forEach(function (c) {
       add(chips, h('button', { class: 'chip' + (mode === c[0] ? ' on' : ''), text: c[1], onclick: function (e) {
         mode = c[0]; setPref('cabinMode', mode);
         Array.prototype.forEach.call(chips.children, function (x) { x.classList.remove('on'); }); e.target.classList.add('on'); draw();
@@ -383,8 +576,9 @@
         add(form, discountBanner());
         add(form, h('div', { class: 'card' },
           h('b', { text: 'Your whole travel group' }),
-          h('div', { class: 'small muted', text: 'We try every way to split your group (like 2+4 or 3+3), price each cabin for exactly who is in it, and show the cheapest total for each cabin type.' }),
+          h('div', { class: 'small muted', text: 'We try every way to split your group across your rooms (like 2+4 or 3+3), price each cabin for exactly who is in it, and show the cheapest total for each cabin type.' }),
           stepper(group, 'group', 'Adults', 'adults', 2, 8), stepper(group, 'group', 'Children', 'children', 0, 8),
+          stepper(group, 'group', 'Rooms', 'rooms', 2, 3),
           stepper(group, 'group', 'Max guests per cabin', 'maxPer', 2, 6),
           h('label', { class: 'toggle' }, h('div', null, h('span', { text: 'Connecting cabins only' }), h('div', { class: 'small muted', text: 'Cabins with a door between them' })), conn),
           h('button', { class: 'btn block', style: 'margin-top:8px', text: 'Find the best split', onclick: loadGroup })));
@@ -422,9 +616,9 @@
       }).catch(function (e) { if (alive()) { clear(out); add(out, errBox(e)); } });
     }
     function loadGroup() {
-      var splits = Core.planSplits(group.adults, group.children, group.maxPer, 2);
+      var splits = Core.planSplits(group.adults, group.children, group.maxPer, group.rooms).filter(function (sp) { return sp.length === group.rooms; });
       clear(out);
-      if (!splits.length) { add(out, errBox('That group doesn\'t fit in 2 cabins of ' + group.maxPer + ' with at least one adult in each. Raise "Max guests per cabin".')); return; }
+      if (!splits.length) { add(out, errBox('That group doesn\'t fit in ' + group.rooms + ' rooms of up to ' + group.maxPer + ' with at least one adult in each. Change rooms or max guests per cabin.')); return; }
       var occ = Core.occupanciesFor(splits), table = {}, done = 0, idx = 0;
       var prog = h('div', { class: 'progress' });
       add(out, prog);

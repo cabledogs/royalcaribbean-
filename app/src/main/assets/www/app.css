@@ -224,3 +224,15 @@ button.item:active, .tap:active { background: var(--chip); }
 /* ---------- login (web) ---------- */
 .login-wrap { max-width: 400px; margin: 30px auto; }
 .brand-mark { font-size: 46px; text-align: center; }
+
+/* ---------- cheapest cruise finder ---------- */
+.finder-cta {
+  width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; border: 0; border-radius: var(--radius);
+  padding: 14px; margin-bottom: 14px; color: #fff; background: linear-gradient(135deg, var(--coral), #f08a3c); box-shadow: var(--shadow);
+}
+.finder-cta .e { font-size: 28px; }
+.finder-cta .small { opacity: .92; }
+.finder-cta .chev { color: #fff; }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }
+.chip.small-chip { padding: 5px 10px; font-size: 13px; }
+.rank { width: 28px; height: 28px; flex: none; border-radius: 50%; background: var(--chip); display: grid; place-items: center; font-weight: 700; font-size: 13px; margin-top: 2px; }

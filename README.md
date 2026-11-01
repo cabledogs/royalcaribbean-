@@ -22,6 +22,13 @@ scripts by jdeath. Not affiliated with Royal Caribbean Group.
 5. **My Cruises**: sign in with your cruise line account to see whether anything you already
    bought is cheaper now (rebook & save).
 
+## Cheapest cruise finder
+Explore → **Find the cheapest cruise**: pick ship classes (Icon, Oasis, Quantum, … or Celebrity
+classes, with individual ships you can leave out), adults/kids, **1–3 rooms**, **connecting rooms only**,
+cruise length (2–5 / 6–8 / 9+ nights), a month range and cabin type. Every matching sailing is
+priced for your exact room split (with your discounts) and listed cheapest first; tap one to open it.
+Up to 150 sailings per search, so a narrower date range is faster.
+
 ## Install the APK
 Download `CruiseDeals.apk`, open it on your phone and allow "install unknown apps".
 Android 8.0+ required.

@@ -82,6 +82,30 @@
       .replace(/ Of The /g, ' of the ');
   }
 
+  /* Ship classes by ship name (first word of the name, lower case). New ships: add them here. */
+  var SHIP_CLASSES = [
+    { id: 'icon', name: 'Icon Class', brand: 'royal', ships: ['icon', 'star', 'legend', 'hero'] },
+    { id: 'oasis', name: 'Oasis Class', brand: 'royal', ships: ['oasis', 'allure', 'harmony', 'symphony', 'wonder', 'utopia'] },
+    { id: 'quantum', name: 'Quantum Class', brand: 'royal', ships: ['quantum', 'anthem', 'ovation', 'spectrum', 'odyssey'] },
+    { id: 'freedom', name: 'Freedom Class', brand: 'royal', ships: ['freedom', 'liberty', 'independence'] },
+    { id: 'voyager', name: 'Voyager Class', brand: 'royal', ships: ['voyager', 'explorer', 'adventure', 'navigator', 'mariner'] },
+    { id: 'radiance', name: 'Radiance Class', brand: 'royal', ships: ['radiance', 'brilliance', 'serenade', 'jewel'] },
+    { id: 'vision', name: 'Vision Class', brand: 'royal', ships: ['grandeur', 'enchantment', 'rhapsody', 'vision'] },
+    { id: 'edge', name: 'Celebrity Edge Class', brand: 'celebrity', ships: ['edge', 'apex', 'beyond', 'ascent', 'xcel'] },
+    { id: 'solstice', name: 'Celebrity Solstice Class', brand: 'celebrity', ships: ['solstice', 'equinox', 'eclipse', 'silhouette', 'reflection'] },
+    { id: 'millennium', name: 'Celebrity Millennium Class', brand: 'celebrity', ships: ['millennium', 'infinity', 'summit', 'constellation'] }
+  ];
+
+  function shipClass(shipName) {
+    var royal = isRoyalShip(shipName);
+    var key = String(shipName || '').replace(/^Celebrity\s+/i, '').replace(/\s+of the Seas$/i, '').trim().split(/\s+/)[0].toLowerCase();
+    for (var i = 0; i < SHIP_CLASSES.length; i++) {
+      var c = SHIP_CLASSES[i];
+      if ((c.brand === 'royal') === royal && c.ships.indexOf(key) >= 0) return c.id;
+    }
+    return 'other';
+  }
+
   function isRoyalShip(shipName) { return /of the Seas/i.test(shipName || ''); }
 
   function brandHost(shipName) { return isRoyalShip(shipName) ? 'www.royalcaribbean.com' : 'www.celebritycruises.com'; }
@@ -611,7 +635,7 @@
     parseCabins: parseCabins, planSplits: planSplits, occupanciesFor: occupanciesFor, bestCombos: bestCombos, cabinUrl: cabinUrl, CABIN_HEADERS: CABIN_HEADERS, extractJsonArray: extractJsonArray,
     checkAlert: checkAlert, login: login, checkPurchases: checkPurchases, getProfile: getProfile, discountOpts: discountOpts, discountLabels: discountLabels,
     classifyCategory: classifyCategory, parsePrice: parsePrice, productPrice: productPrice,
-    titleCase: titleCase, isRoyalShip: isRoyalShip, brandHost: brandHost, plannerUrl: plannerUrl,
+    titleCase: titleCase, isRoyalShip: isRoyalShip, SHIP_CLASSES: SHIP_CLASSES, shipClass: shipClass, brandHost: brandHost, plannerUrl: plannerUrl,
     fmtMoney: fmtMoney, fmtSailDate: fmtSailDate, sailDateObj: sailDateObj
   };
 });
