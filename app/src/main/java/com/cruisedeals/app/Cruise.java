@@ -127,7 +127,17 @@ final class Cruise {
         sb.append("&cabinClassType=INTERIOR&roomIndex=0");
         sb.append("&r0a=").append(o.optInt("adults", 2));
         sb.append("&r0c=").append(o.optInt("children", 0));
-        sb.append("&r0b=n&r0r=n&r0s=n&r0q=n&r0t=n&r0d=INTERIOR&r0D=y&rgVisited=true&r0C=y");
+        sb.append("&r0b=n");
+        sb.append("&r0r=").append(o.optBoolean("police") ? "y" : "n");
+        sb.append("&r0s=").append(o.optBoolean("fire") ? "y" : "n");
+        sb.append("&r0q=").append(o.optBoolean("military") ? "y" : "n");
+        sb.append("&r0t=").append(o.optBoolean("senior") ? "y" : "n");
+        sb.append("&r0d=INTERIOR&r0D=y&rgVisited=true&r0C=y");
+        // discount qualifiers: loyalty number (Crown & Anchor / Captain's Club) and residency state
+        String loyalty = o.optString("loyaltyNumber", "");
+        if (loyalty.matches("\\d{4,15}")) sb.append("&r0l=").append(loyalty);
+        String state = o.optString("state", "");
+        if (state.matches("[A-Z]{2}")) sb.append("&r0k=").append(state);
         return sb.toString();
     }
 
