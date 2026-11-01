@@ -233,3 +233,14 @@ button.item:active, .tap:active { background: var(--chip); }
 .bubble-label { text-align: center; font-size: 11px; color: #8a8a8e; margin: 12px 0 6px; text-transform: uppercase; letter-spacing: .04em; }
 .bubble { background: #e9e9eb; color: #111; border-radius: 18px 18px 18px 4px; padding: 9px 13px; max-width: 85%; white-space: pre-wrap; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
 .bubble-meta { font-size: 11px; color: #8a8a8e; margin: 3px 0 0 6px; }
+/* ---------- cheapest cruise finder ---------- */
+.finder-cta {
+  width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; border: 0; border-radius: var(--radius);
+  padding: 14px; margin-bottom: 14px; color: #fff; background: linear-gradient(135deg, var(--coral), #f08a3c); box-shadow: var(--shadow);
+}
+.finder-cta .e { font-size: 28px; }
+.finder-cta .small { opacity: .92; }
+.finder-cta .chev { color: #fff; }
+.chips.wrap { flex-wrap: wrap; overflow: visible; }
+.chip.small-chip { padding: 5px 10px; font-size: 13px; }
+.rank { width: 28px; height: 28px; flex: none; border-radius: 50%; background: var(--chip); display: grid; place-items: center; font-weight: 700; font-size: 13px; margin-top: 2px; }
