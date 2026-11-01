@@ -1,0 +1,5 @@
+.toolchain/
+app/build/
+node_modules/
+data/
+*.p12

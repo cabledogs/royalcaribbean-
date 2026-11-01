@@ -1,0 +1,57 @@
+// Headless smoke test of the app UI with a mocked Android bridge.
+const { chromium } = require('playwright');
+const path = require('path');
+(async () => {
+  const www = path.resolve(__dirname, '../app/src/main/assets/www');
+  const browser = await chromium.launch();
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.addInitScript({ path: path.join(__dirname, 'mock-native.js') });
+  await page.goto('file://' + www + '/index.html');
+  const shot = n => page.screenshot({ path: path.join(__dirname, 'shots', n + '.png') });
+
+  await page.waitForSelector('text=Wonder of the Seas');
+  await shot('1-ships');
+  await page.fill('.search', 'beyond');
+  if (await page.locator('text=Wonder of the Seas').count()) throw new Error('ship search did not filter');
+  await page.fill('.search', '');
+  await page.click('text=Wonder of the Seas');
+  await page.waitForSelector('text=7 Night Western Caribbean');
+  await shot('2-sailings');
+  await page.click('text=7 Night Western Caribbean');
+  await page.waitForSelector('text=Deluxe Beverage Package');
+  await shot('3-drinks');
+  await page.click('[data-tab=wifi]'); await page.waitForSelector('text=VOOM Surf');
+  await page.click('[data-tab=dining]'); await page.waitForSelector('text=Unlimited Dining Package');
+  await page.click('[data-tab=excursions]'); await page.waitForSelector('text=Mayan Ruins Tour');
+  await page.waitForSelector('text=Day 3 · Cozumel');
+  await shot('4-excursions');
+  await page.click('button[aria-label="Price alert for Mayan Ruins Tour"]');
+  await page.waitForSelector('#sheet:not([hidden])');
+  await shot('5-alert-sheet');
+  await page.click('text=Create alert');
+  await page.click('[data-tab=cabins]'); await page.waitForSelector('text=Balcony');
+  await shot('6-cabins');
+  await page.click('text=Whole group (2 cabins)');
+  await page.click('text=Find the best split');
+  await page.waitForSelector('text=Cabin 2:');
+  await page.waitForSelector('text=Interior Connecting');
+  await shot('6b-group-cabins');
+  await page.click('[data-root=alerts]'); await page.waitForSelector('text=Mayan Ruins Tour');
+  await page.click('text=Check prices now'); await page.waitForSelector('text=Price dropped');
+  await shot('7-alerts');
+  await page.click('[data-root=mycruises]'); await page.waitForSelector('text=Sign in & check my purchases');
+  await shot('8-mycruises');
+  await page.click('[data-root=settings]'); await page.waitForSelector('text=Currency');
+  // back-button behaviour
+  await page.click('[data-root=explore]'); await page.click('text=Wonder of the Seas');
+  const handled = await page.evaluate(() => window.onNativeBack());
+  if (!handled) throw new Error('back not handled');
+  const atRoot = await page.evaluate(() => window.onNativeBack());
+  if (atRoot) throw new Error('back at root should exit');
+  if (errors.length) throw new Error('JS errors: ' + errors.join('\n'));
+  console.log('UI test passed');
+  await browser.close();
+})().catch(e => { console.error(e); process.exit(1); });
