@@ -169,6 +169,8 @@ button.item:active, .tap:active { background: var(--chip); }
 .toolbar select { padding: 11px 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); max-width: 42%; }
 .cat-h { display: flex; align-items: baseline; justify-content: space-between; margin: 16px 4px 8px; }
 .cat-h b { font-size: 15px; }
+.port-h { display: flex; align-items: flex-end; gap: 10px; margin: 22px 4px 8px; padding-bottom: 6px; border-bottom: 2px solid var(--sea); }
+.port-name { font-size: 19px; font-weight: 700; }
 .prod { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
 .prod:last-child { border-bottom: 0; }
 .prod .t { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }

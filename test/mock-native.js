@@ -17,12 +17,12 @@
     if (url.indexOf('/mobile/v2/ships') > 0) return { payload: { ships: [] } };
     if (url.indexOf('/web/v2/ships') > 0) return { payload: { ships: [{ shipCode: 'WN', name: 'WONDER OF THE SEAS' }, { shipCode: 'IC', name: 'ICON OF THE SEAS' }, { shipCode: 'BY', name: 'CELEBRITY BEYOND' }] } };
     if (/voyages$/.test(url)) return { payload: { voyages: [{ sailDate: '20270110', voyageDescription: '7 Night Western Caribbean', duration: 7, voyageCode: 'W123' }, { sailDate: '20270215', voyageDescription: '4 Night Bahamas & Perfect Day', duration: 4, voyageCode: 'W456' }] } };
-    if (/sailDate\/\d+$/.test(url)) return { payload: { sailingInfo: [{ itinerary: { events: [{ day: 1, port: { portName: 'Port Canaveral', portType: 'EMBARK', departureDateTime: '20270110T1600' } }, { day: 2, port: { portName: 'Cruising', portType: 'CRUISING' } }, { day: 3, port: { portName: 'Cozumel', portType: 'DOCKED', arrivalDateTime: '20270112T0800', departureDateTime: '20270112T1700' } }] } }] } };
+    if (/sailDate\/\d+$/.test(url)) return { payload: { sailingInfo: [{ itinerary: { events: [{ day: 1, port: { portName: 'Port Canaveral', portType: 'EMBARK', departureDateTime: '20270110T1600' } }, { day: 2, port: { portName: 'Cruising', portType: 'CRUISING' } }, { day: 3, port: { portName: 'Cozumel', portType: 'DOCKED', arrivalDateTime: '20270112T0800', departureDateTime: '20270112T1700' } }, { day: 5, port: { portName: 'Roatan', portType: 'DOCKED', arrivalDateTime: '20270114T0800', departureDateTime: '20270114T1700' } }] } }] } };
     if (url.indexOf('graphql') > 0) {
       var b = JSON.parse(body);
       if (b.operationName === 'WebCategories') return { data: { categories: { categories: [{ id: 'pt_beverage', name: 'Beverage' }, { id: 'pt_internet', name: 'Internet' }, { id: 'dining', name: 'Dining' }, { id: 'shorex', name: 'Shore Excursions' }, { id: 'pt_spa', name: 'Spa' }] } } };
       var v = b.variables, items = catalog[v.category] || [];
-      if (v.category === 'shorex') items = (v.filter.dayNumber || [0])[0] === 3 ? items : [];
+      if (v.category === 'shorex') { var dn = (v.filter.dayNumber || [0])[0]; items = dn === 3 ? items : dn === 5 ? [product('9101', 'Roatan Zipline Canopy Adventure', 99), product('9102', 'Little French Key Beach Day', 119)] : []; }
       return { data: { products: { commerceProducts: v.currentPage === 0 ? items : [] } } };
     }
     return null;

@@ -293,7 +293,8 @@
         h('button', { class: 'btn', text: '↗ Cruise Planner', onclick: function () { P.openUrl(Core.plannerUrl(ship.name, ship.code, sailing.date)); } }))));
 
     var ports = {};
-    api.itinerary(ship.code, sailing.date).then(function (it) {
+    // excursions wait for this so every section can be labelled with its port (never rejects)
+    var itinP = api.itinerary(ship.code, sailing.date).then(function (it) {
       it.forEach(function (d) {
         ports[d.day] = d.port;
         var times = d.type === 'EMBARK' ? (d.depart ? 'departs ' + d.depart : '') : d.type === 'DEBARK' ? (d.arrive ? 'arrives ' + d.arrive : '')
@@ -301,7 +302,8 @@
         add(itinList, h('li', null, h('b', { text: 'Day ' + d.day }), h('span', { class: 'grow', text: d.port + (d.type === 'TENDERED' ? ' (tender)' : '') }), h('span', { text: times })));
       });
       if (!it.length) itinBtn.hidden = true;
-    }).catch(function () { itinBtn.hidden = true; });
+      return ports;
+    }).catch(function () { itinBtn.hidden = true; return ports; });
 
     var tab = p.tab || pref('lastTab', 'drinks');
     var segs = h('div', { class: 'segs', role: 'tablist' });
@@ -324,7 +326,8 @@
       catsP.then(function (cats) {
         if (!alive()) return;
         var mine = cats.filter(function (c) { return c.tab === tab; });
-        productsTab(body, ship, sailing, tab, mine, ports, alive);
+        if (tab !== 'excursions') return productsTab(body, ship, sailing, tab, mine, ports, alive);
+        itinP.then(function () { if (alive()) productsTab(body, ship, sailing, tab, mine, ports, alive); });
       }).catch(function (e) { if (alive()) { clear(body); add(body, [errBox(e), h('button', { class: 'btn block', text: 'Try again', onclick: render })]); } });
     }
     show();
@@ -479,14 +482,43 @@
       [['rank', 'Recommended'], ['low', 'Price: low to high'], ['high', 'Price: high to low'], ['az', 'Name A-Z']].map(function (o) { return h('option', { value: o[0], selected: o[0] === sort, text: o[1] }); }));
     var progress = h('div', { class: 'progress' });
     var listEl = h('div');
-    add(body, [h('div', { class: 'toolbar' }, search, sel), progress, listEl,
+    var isEx = tab === 'excursions';
+    var portChips = h('div', { class: 'chips port-chips', style: 'padding-top:0', hidden: !isEx });
+    var portSel = '';
+    add(body, [h('div', { class: 'toolbar' }, search, sel), portChips, progress, listEl,
       h('div', { class: 'notice', text: 'Public prices. You may see lower prices after login (loyalty, casino, or onboard specials). Tap \u{1F514} to get a price-drop alert.' })]);
 
-    var groups = []; // {key, title, cat, day, items}
+    var groups = []; // {key, title, cat, day, port, items}
+    function dayDate(day) {
+      var dt = Core.sailDateObj(sailing.date);
+      dt.setDate(dt.getDate() + day - 1);
+      return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+    function drawPortChips() {
+      if (!isEx) return;
+      clear(portChips);
+      var order = [], counts = {};
+      groups.forEach(function (g) {
+        var name = g.port || ('Day ' + g.day);
+        if (!(name in counts)) { order.push(name); counts[name] = 0; }
+        counts[name] += g.items.length;
+      });
+      if (order.length < 2) { portChips.hidden = true; return; }
+      portChips.hidden = false;
+      if (portSel && !(portSel in counts)) portSel = '';
+      [''].concat(order).forEach(function (name) {
+        var total = name ? counts[name] : order.reduce(function (n, k) { return n + counts[k]; }, 0);
+        add(portChips, h('button', { class: 'chip' + (portSel === name ? ' on' : ''), text: (name || 'All ports') + ' (' + total + ')', onclick: function () {
+          portSel = name; draw(); window.scrollTo(0, body.offsetTop - 60);
+        } }));
+      });
+    }
     function draw() {
       clear(listEl);
+      drawPortChips();
       var ql = q.toLowerCase(), any = false;
       groups.forEach(function (g) {
+        if (isEx && portSel && (g.port || ('Day ' + g.day)) !== portSel) return;
         var items = g.items.filter(function (it) { return !ql || it.title.toLowerCase().indexOf(ql) >= 0 || g.title.toLowerCase().indexOf(ql) >= 0; });
         if (!items.length) return;
         any = true;
@@ -494,7 +526,14 @@
         if (sort === 'low') items.sort(function (a, b) { return a.price - b.price; });
         else if (sort === 'high') items.sort(function (a, b) { return b.price - a.price; });
         else if (sort === 'az') items.sort(function (a, b) { return a.title.localeCompare(b.title); });
-        add(listEl, h('div', { class: 'cat-h' }, h('b', { text: g.title }), h('span', { class: 'small muted', text: items.length + ' item' + (items.length > 1 ? 's' : '') })));
+        if (isEx && g.day !== 'all') {
+          add(listEl, h('div', { class: 'port-h' },
+            h('div', { class: 'grow' }, h('div', { class: 'port-name', text: '\u{1F4CD} ' + (g.port || 'Day ' + g.day) }),
+              h('div', { class: 'small muted', text: 'Day ' + g.day + ' \u00b7 ' + dayDate(g.day) })),
+            h('span', { class: 'small muted', text: items.length + ' excursion' + (items.length > 1 ? 's' : '') })));
+        } else {
+          add(listEl, h('div', { class: 'cat-h' }, h('b', { text: g.title }), h('span', { class: 'small muted', text: items.length + ' item' + (items.length > 1 ? 's' : '') })));
+        }
         add(listEl, h('div', { class: 'list' }, items.map(function (it) { return productRow(it, g); })));
       });
       if (!any && !loading) add(listEl, empty('\u{1F50D}', q ? 'Nothing matches "' + q + '"' : 'Nothing for sale here yet'));
