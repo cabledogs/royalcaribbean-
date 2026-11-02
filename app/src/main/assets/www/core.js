@@ -399,6 +399,119 @@
     });
   }
 
+  /* Inside / Ocean View / Balcony / Suite from a cruise-line room name (Royal and Celebrity wording). */
+  function cabinTypeOf(name) {
+    var n = String(name || '').toLowerCase();
+    if (/suite|loft|haven|retreat|villa/.test(n)) return 'suite';
+    if (/balcon|veranda|aquaclass|concierge/.test(n)) return 'balcony';
+    if (/ocean|outside|panoramic|porthole|window/.test(n)) return 'ocean';
+    if (/interior|inside/.test(n)) return 'interior';
+    return 'other';
+  }
+  var CABIN_KIND_NAMES = { interior: 'Inside', ocean: 'Ocean View', balcony: 'Balcony', suite: 'Suite', other: 'Other' };
+
+  /*
+   * Royal's rooms service (what the booking site itself uses). Asking for ALL of a group's rooms in
+   * one request makes it mark each category "connecting": true when connecting rooms are open for
+   * that group, and list cabin numbers with their "connectingCabin".
+   *   o: {packageCode, sailDate (YYYYMMDD), currency, host, rooms:[{adults, children}], loyaltyNumber, state, senior, ...}
+   * Returns {rooms: [[category...] per requested room], pairs: [[cabin, cabin, categoryCode, kind]...]}
+   */
+  async function getRoomOptions(http, o) {
+    var d = String(o.sailDate);
+    var royal = (o.host || 'www.royalcaribbean.com').indexOf('celebrity') < 0;
+    var body = {
+      countryCode: 'USA', packageId: o.packageCode, sailDate: d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8),
+      currencyCode: o.currency || 'USD', language: 'en', options: true, roomNumbers: true, platform: 'web',
+      rooms: (o.rooms || []).map(function (r) {
+        var q = { fireFighter: !!o.fire, military: !!o.military, police: !!o.police, senior: !!o.senior };
+        if (o.loyaltyNumber) q.loyaltyNumber = String(o.loyaltyNumber);
+        if (o.state) q.stateCode = String(o.state);
+        return { adultCount: r.adults, childCount: r.children || 0, stateroomTypeCode: 'INTERIOR', accessible: false,
+          selectionFallbackStrategy: 'RECOMMENDATION', editMode: true, reset: false, taxesAndFeesBundled: true, qualifiers: q };
+      })
+    };
+    var r = await http('POST', 'https://' + (royal ? 'www.royalcaribbean.com' : 'www.celebritycruises.com') + '/room-selection/api/v1/rooms', {
+      headers: { 'User-Agent': UA_WEB, 'Accept': '*/*', 'Content-Type': 'application/json', 'brand': royal ? 'R' : 'C', 'country': 'USA' },
+      body: JSON.stringify(body)
+    });
+    if (!r || r.status !== 200) throw new Error('Could not get room options (' + (r ? r.status : 'no response') + ')');
+    var j = parseJson(r.body);
+    if (!j || !Array.isArray(j.rooms)) throw new Error('Unexpected room options reply');
+    return parseRoomOptions(j);
+  }
+
+  function parseRoomOptions(j) {
+    var pairsSeen = {}, pairs = [];
+    var rooms = (j.rooms || []).map(function (rm) {
+      var cats = {};
+      (function walk(node, ancestors) {
+        if (!node || typeof node !== 'object') return;
+        if (Array.isArray(node)) { node.forEach(function (x) { walk(x, ancestors); }); return; }
+        if (typeof node.categoryCode === 'string' && node.pricing && typeof node.pricing === 'object') {
+          var inv = node.pricing.invoice || {};
+          var price = typeof inv.total === 'number' ? inv.total : (typeof node.pricing.amount === 'number' ? node.pricing.amount : null);
+          var typeName = node.stateroomType && typeof node.stateroomType.name === 'string' ? node.stateroomType.name : '';
+          for (var a = ancestors.length - 1; a >= 0 && !typeName; a--) {
+            if (typeof ancestors[a].name === 'string' && typeof ancestors[a].summary === 'string') typeName = ancestors[a].name;
+          }
+          var catName = (node.image && typeof node.image.alt === 'string' && node.image.alt) || (typeof node.name === 'string' && node.name) || node.categoryCode;
+          var kind = cabinTypeOf(typeName);
+          if (kind === 'other') kind = cabinTypeOf(catName);
+          var cabinPairs = [];
+          (Array.isArray(node.cabins) ? node.cabins : []).forEach(function (c) {
+            var other = c && c.connectingCabin && c.connectingCabin.cabinNumber;
+            if (!c || !c.cabinNumber || !other) return;
+            cabinPairs.push([String(c.cabinNumber), String(other)]);
+            var key = [String(c.cabinNumber), String(other)].sort().join('&');
+            if (!pairsSeen[key]) { pairsSeen[key] = 1; pairs.push([String(c.cabinNumber), String(other), node.categoryCode, kind, catName]); }
+          });
+          var cur = cats[node.categoryCode];
+          if (!cur) cur = cats[node.categoryCode] = { code: node.categoryCode, name: catName, kind: kind, price: null, connecting: false, available: null, guarantee: false, pairs: [] };
+          if (price !== null && (cur.price === null || price < cur.price)) cur.price = price;
+          if (node.connecting === true || cabinPairs.length) cur.connecting = true;
+          if (typeof node.stateroomsAvailable === 'number') cur.available = node.stateroomsAvailable;
+          if (node.guarantee === true || /guarantee/i.test(catName)) cur.guarantee = true;
+          cabinPairs.forEach(function (p) {
+            if (!cur.pairs.some(function (q) { return q[0] === p[1] && q[1] === p[0] || q[0] === p[0] && q[1] === p[1]; })) cur.pairs.push(p);
+          });
+          if (cur.name === cur.code && catName !== cur.code) cur.name = catName;
+        }
+        var next = ancestors.concat([node]);
+        Object.keys(node).forEach(function (k) { if (node[k] && typeof node[k] === 'object') walk(node[k], next); });
+      })(rm, []);
+      return Object.keys(cats).map(function (k) { return cats[k]; }).filter(function (c) { return c.price !== null && c.available !== 0; });
+    });
+    return { rooms: rooms, pairs: pairs };
+  }
+
+  /*
+   * Cheapest option per cabin kind for one split, all rooms in the SAME category (that is how
+   * connecting pairs are sold). Returns [{kind, name, code, total, perRoom:[price...], connecting, pairs}]
+   */
+  function bestByKind(roomOptions, connectingOnly) {
+    var lists = roomOptions.rooms;
+    if (!lists.length) return [];
+    var best = {};
+    lists[0].forEach(function (c0) {
+      var per = [], all = true, conn = true;
+      for (var i = 0; i < lists.length; i++) {
+        var c = null;
+        lists[i].forEach(function (x) { if (x.code === c0.code) c = x; });
+        if (!c) { all = false; break; }
+        per.push(c.price);
+        if (!c.connecting) conn = false;
+      }
+      if (!all) return;
+      var multi = lists.length > 1;
+      if (connectingOnly && multi && !conn) return;
+      var total = Math.round(per.reduce(function (a, b) { return a + b; }, 0) * 100) / 100;
+      var cur = best[c0.kind];
+      if (!cur || total < cur.total) best[c0.kind] = { kind: c0.kind, name: c0.name, code: c0.code, total: total, perRoom: per, connecting: multi && conn, guarantee: c0.guarantee, pairs: c0.pairs.slice(0, 6) };
+    });
+    return ['interior', 'ocean', 'balcony', 'suite', 'other'].filter(function (k) { return best[k]; }).map(function (k) { return best[k]; });
+  }
+
   async function getCabins(http, o) {
     var r = await http('GET', cabinUrl(o), { headers: CABIN_HEADERS });
     if (!r || r.status < 200 || r.status >= 300) throw new Error('Could not retrieve cabin prices (' + (r ? r.status : 'no response') + ')');
@@ -636,7 +749,8 @@
     ALLOWED_HOSTS: ALLOWED_HOSTS,
     getShips: getShips, getSailings: getSailings, getItinerary: getItinerary,
     getCategories: getCategories, getProducts: getProducts, getCabins: getCabins,
-    parseCabins: parseCabins, planSplits: planSplits, occupanciesFor: occupanciesFor, bestCombos: bestCombos, cabinUrl: cabinUrl, CABIN_HEADERS: CABIN_HEADERS, extractJsonArray: extractJsonArray,
+    parseCabins: parseCabins, getRoomOptions: getRoomOptions, parseRoomOptions: parseRoomOptions, bestByKind: bestByKind,
+    cabinTypeOf: cabinTypeOf, CABIN_KIND_NAMES: CABIN_KIND_NAMES, planSplits: planSplits, occupanciesFor: occupanciesFor, bestCombos: bestCombos, cabinUrl: cabinUrl, CABIN_HEADERS: CABIN_HEADERS, extractJsonArray: extractJsonArray,
     checkAlert: checkAlert, login: login, checkPurchases: checkPurchases, getProfile: getProfile, discountOpts: discountOpts, discountLabels: discountLabels,
     classifyCategory: classifyCategory, parsePrice: parsePrice, productPrice: productPrice,
     titleCase: titleCase, isRoyalShip: isRoyalShip, SHIP_CLASSES: SHIP_CLASSES, shipClass: shipClass, brandHost: brandHost, plannerUrl: plannerUrl,

@@ -10,7 +10,27 @@
     dining: [product('7001', 'Unlimited Dining Package', 299), product('7002', 'Chops Grille Dinner', 64.99)],
     shorex: [product('9001', 'Cozumel Beach Break', 79), product('9002', 'Mayan Ruins Tour', 129)]
   };
+  // rooms service, shaped like the real reply captured by tools/probe-connecting.js
+  function roomsReply(body) {
+    var b = JSON.parse(body);
+    function cat(code, alt, base, conn, n, pairs, avail) {
+      var f = 1 + 0.35 * (n - 2), amt = Math.round(base * f * 100) / 100;
+      var cabins = conn && b.rooms.length > 1 ? pairs.map(function (p) { return { cabinNumber: p[0], positionCode: 'AF', connectingCabin: { cabinNumber: p[1], positionCode: 'AF' } }; }) : [];
+      return { pricing: { invoice: { total: amt }, amount: amt }, categoryCode: code, fareCode: 'CG1', connecting: conn && b.rooms.length > 1, image: { alt: alt }, stateroomsAvailable: avail === undefined ? 10 : avail, cabins: cabins };
+    }
+    return { sailing: { sailDate: b.sailDate }, rooms: b.rooms.map(function (r) {
+      var n = r.adultCount + r.childCount;
+      return { request: r, room: { stateroomType: { name: 'Interior' }, categoryCode: 'ZQ', pricing: { invoice: { total: 1 } } },
+        options: { stateroomTypes: [
+          { name: 'Interior', summary: 'Our Interior rooms', connecting: true, categories: [cat('ZQ', 'Interior Quad Guarantee', 1300, false, n), cat('T5', 'Surfside Family Interior', 1490, true, n, [['8341', '8343'], ['8343', '8341'], ['8721', '8723']])] },
+          { name: 'Ocean View', summary: 'Soak in', connecting: true, categories: [cat('YQ', 'Ocean View Quad Guarantee', 1600, false, n), cat('N5', 'Ocean View', 1750, true, n, [['9101', '9103']])] },
+          { name: 'Balcony', summary: 'Fresh air', connecting: false, categories: [cat('XQ', 'Balcony Guarantee', 2100, false, n), cat('XB', 'Balcony', 2300, false, n, [], 0)] },
+          { name: 'Suite', summary: 'Suites', connecting: false, categories: n > 4 ? [] : [cat('J4', 'Junior Suite', 4100, false, n)] }
+        ] } };
+    }) };
+  }
   function respond(method, url, body) {
+    if (url.indexOf('/room-selection/api/v1/rooms') > 0) { (window.__roomCalls = window.__roomCalls || []).push(JSON.parse(body)); return roomsReply(body); }
     if (url.indexOf('/auth/oauth2/access_token') > 0) return { access_token: 'x.' + btoa(JSON.stringify({ sub: 'acct42' })) + '.y' };
     if (url.indexOf('/guestAccounts/acct42') > 0) return { payload: { loyaltyInformation: { crownAndAnchorId: '987654321', crownAndAnchorSocietyLoyaltyTier: 'DIAMOND', crownAndAnchorSocietyLoyaltyIndividualPoints: 93 }, contactInformation: { address: { residencyCountryCode: 'USA', state: 'FL' } } } };
     if (url.indexOf('/profileBookings/enriched/acct42') > 0) return { payload: { profileBookings: [] } };

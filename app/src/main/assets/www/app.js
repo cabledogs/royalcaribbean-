@@ -191,6 +191,10 @@
       h('div', { class: 'grow' }, h('b', { text: 'Find the cheapest cruise' }),
         h('div', { class: 'small', text: 'By ship class (Icon, Oasis\u2026), group size, connecting rooms and length' })),
       h('span', { class: 'chev', text: '\u203a' })));
+    add(v, h('button', { class: 'item card tap', style: 'margin-bottom:14px', onclick: function () { go('connecting'); } },
+      h('span', { style: 'font-size:24px', text: '\u{1F6AA}' }),
+      h('div', { class: 'grow' }, h('div', { class: 't', text: 'Connecting cabins by ship' }), h('div', { class: 's', text: 'Every connecting pair we have found, deck by deck' })),
+      h('span', { class: 'chev', text: '\u203a' })));
     add(v, steps(0));
     if (recent.length) {
       add(v, h('h2', { text: 'Recently viewed' }));
@@ -231,17 +235,77 @@
     });
   };
 
+  /* ---------- group pricing with Royal's rooms service (connecting-aware) ---------- */
+  function whoText(a, c) { return a + ' adult' + (a > 1 ? 's' : '') + (c ? ' + ' + c + ' kid' + (c > 1 ? 's' : '') : ''); }
+  function kindName(k) { return Core.CABIN_KIND_NAMES[k] || k; }
+
+  /* connecting cabin pairs we have seen, remembered per ship (they never change) */
+  function shipPairs(code) { return pref('pairs.' + code, {}); }
+  function learnPairs(code, pairs) {
+    if (!pairs || !pairs.length) return;
+    var m = shipPairs(code), changed = false;
+    pairs.forEach(function (p) {
+      var key = [p[0], p[1]].sort(function (a, b) { return a - b; }).join('&');
+      if (!m[key]) { m[key] = { a: key.split('&')[0], b: key.split('&')[1], cat: p[2], kind: p[3], name: p[4] }; changed = true; }
+    });
+    if (changed) { setPref('pairs.' + code, m); setPref('pairsUpdated.' + code, Date.now()); }
+  }
+
+  api.roomOptions = function (o) {
+    return cached('ro.' + JSON.stringify(o), 30 * 60e3, function () { return Core.getRoomOptions(http, o); });
+  };
+
+  /*
+   * Best price per cabin kind for a group on one sailing.
+   * Resolves {byKind:[{kind, name, code, total, perRoom, connecting, pairs, split}], kinds:[all kinds offered], source}
+   */
+  function groupPrices(ship, sailing, splits, connecting) {
+    var disc = Core.discountOpts(discounts(), ship.name);
+    function base() {
+      var o = { packageCode: ship.code + sailing.voyageCode, sailDate: sailing.date, currency: currency(), host: Core.brandHost(ship.name) };
+      for (var k in disc) o[k] = disc[k];
+      return o;
+    }
+    var best = {}, kinds = {}, ok = 0;
+    return Promise.all(splits.map(function (sp) {
+      var o = base(); o.rooms = sp.map(function (c) { return { adults: c.adults, children: c.children }; });
+      return api.roomOptions(o).then(function (ro) {
+        ok++;
+        learnPairs(ship.code, ro.pairs);
+        (ro.rooms[0] || []).forEach(function (c) { kinds[c.kind] = 1; });
+        Core.bestByKind(ro, connecting).forEach(function (b) {
+          if (!best[b.kind] || b.total < best[b.kind].total) { b.split = sp; best[b.kind] = b; }
+        });
+      }, function () { /* try the other splits */ });
+    })).then(function () {
+      if (ok) return { byKind: ['interior', 'ocean', 'balcony', 'suite', 'other'].filter(function (k) { return best[k]; }).map(function (k) { return best[k]; }), kinds: Object.keys(kinds), source: 'rooms' };
+      // fallback: older per-cabin page (no connecting flags for most categories)
+      var occ = Core.occupanciesFor(splits), table = {};
+      return Promise.all(occ.map(function (oc) {
+        var o = base(); o.adults = oc.adults; o.children = oc.children;
+        return api.cabins(o).then(function (rows) { table[oc.adults + '/' + oc.children] = rows; }, function () { table[oc.adults + '/' + oc.children] = []; });
+      })).then(function () {
+        var out = [], seen = {};
+        Core.bestCombos(table, splits, connecting).forEach(function (x) {
+          var k = Core.cabinTypeOf(x.name); seen[k] = 1;
+          if (!x.best || x.best.cabins.length !== splits[0].length) return;
+          if (!out.some(function (y) { return y.kind === k && y.total <= x.best.total; })) {
+            out = out.filter(function (y) { return y.kind !== k; });
+            out.push({ kind: k, name: x.name, code: '', total: x.best.total, perRoom: x.best.cabins.map(function (c) { return c.price; }), connecting: x.best.connecting, pairs: [],
+              split: x.best.cabins.map(function (c) { return { adults: c.adults, children: c.children }; }) });
+          }
+        });
+        if (!out.length && !Object.keys(seen).length) throw new Error('Could not get prices for this sailing');
+        return { byKind: out, kinds: Object.keys(seen), source: 'fallback' };
+      });
+    });
+  }
+
+  function pairText(pairs) { return pairs.slice(0, 3).map(function (p) { return p[0] + ' & ' + p[1]; }).join(', ') + (pairs.length > 3 ? ' +' + (pairs.length - 3) + ' more' : ''); }
+
   /* ================= Cheapest cruise finder ================= */
   var LENGTHS = [['short', '2-5 nights', 2, 5], ['week', '6-8 nights', 6, 8], ['long', '9+ nights', 9, 99]];
   var CABIN_TYPES = [['any', 'Any'], ['interior', 'Inside'], ['ocean', 'Ocean View'], ['balcony', 'Balcony'], ['suite', 'Suite']];
-  function cabinTypeOf(name) {
-    var n = String(name || '').toLowerCase();
-    if (/suite/.test(n)) return 'suite';
-    if (/balcon/.test(n)) return 'balcony';
-    if (/ocean|outside|oceanview|porthole/.test(n)) return 'ocean';
-    if (/interior|inside/.test(n)) return 'interior';
-    return 'other';
-  }
   function monthKey(d) { return d.getFullYear() * 100 + d.getMonth() + 1; }
   function monthOptions() {
     var out = [], d = new Date(); d.setDate(1);
@@ -373,8 +437,8 @@
           if (results.length > 40) add(listEl, h('div', { class: 'notice', text: '+ ' + (results.length - 40) + ' more sailings (more expensive).' }));
         }
         function resultRow(r, i) {
-          var n = f.adults + f.children;
-          var others = r.byType.filter(function (t) { return t !== r.pick; }).slice(0, 4);
+          var n = f.adults + f.children, pk = r.pick;
+          var others = r.byKind.filter(function (t) { return t !== pk; });
           return h('button', { class: 'item', style: 'align-items:flex-start', onclick: function () {
             setPref('cabinMode', f.rooms > 1 ? 'group' : 'one');
             setPref('group', { adults: f.adults, children: f.children, maxPer: f.maxPer, connecting: connecting, rooms: Math.max(2, f.rooms) });
@@ -386,39 +450,118 @@
               h('div', { class: 't', text: r.ship.name }),
               h('div', { class: 's', text: Core.fmtSailDate(r.sailing.date, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) + ' · ' + r.sailing.duration + ' nights' }),
               h('div', { class: 's', text: r.sailing.description }),
-              h('div', { class: 's', style: 'color:var(--text);font-weight:600' }, (r.pick.best.connecting ? '\u{1F6AA} ' + r.pick.best.cabins.length + ' connecting ' : r.pick.best.cabins.length > 1 ? r.pick.best.cabins.length + ' x ' : '') + r.pick.name),
-              h('div', { class: 's', style: 'color:var(--text)' }, r.pick.best.cabins.map(function (c, k) {
-                var p = c.adults + ' adult' + (c.adults > 1 ? 's' : '') + (c.children ? ' + ' + c.children + ' kid' + (c.children > 1 ? 's' : '') : '');
-                return (r.pick.best.cabins.length > 1 ? 'Room ' + (k + 1) + ': ' : '') + p;
-              }).join(' \u00b7 ')),
-              others.length ? h('div', { class: 's', text: others.map(function (t) { return t.name + ' ' + money(t.best.total); }).join(' · ') }) : null,
-              r.missing.length ? h('div', { class: 's', text: r.missing.join(', ') + ': ' + (connecting ? 'no connecting rooms' : 'nothing that fits') }) : null),
+              h('div', { class: 's', style: 'color:var(--text);font-weight:600' },
+                (pk.connecting ? '\u{1F6AA} ' + pk.split.length + ' connecting ' : pk.split.length > 1 ? pk.split.length + ' x ' : '') + kindName(pk.kind) + ' – ' + pk.name + (pk.code ? ' (' + pk.code + ')' : '')),
+              h('div', { class: 's', style: 'color:var(--text)' }, pk.split.map(function (c, k) {
+                return (pk.split.length > 1 ? 'Room ' + (k + 1) + ': ' : '') + whoText(c.adults, c.children) + (pk.perRoom[k] ? ' ' + money(pk.perRoom[k]) : '');
+              }).join(' · ')),
+              pk.pairs && pk.pairs.length ? h('div', { class: 's', text: 'Open connecting pairs: ' + pairText(pk.pairs) }) : null,
+              others.length ? h('div', { class: 's', text: others.map(function (t) { return kindName(t.kind) + ' ' + money(t.total); }).join(' · ') }) : null,
+              r.missing.length ? h('div', { class: 's', text: r.missing.map(kindName).join(', ') + ': ' + (connecting ? 'no connecting rooms' : 'nothing that fits') }) : null),
             h('div', { class: 'price' }, h('b', { text: money(r.total) }), h('span', { class: 'u', text: money(r.total / n) + ' pp' })));
         }
         function worker() {
           if (idx >= cands.length || !alive()) return Promise.resolve();
           var c = cands[idx++];
-          var table = {};
-          var disc = Core.discountOpts(discounts(), c.ship.name);
-          return Promise.all(occ.map(function (o) {
-            var opts = { packageCode: c.ship.code + c.sailing.voyageCode, sailDate: c.sailing.date, currency: currency(), adults: o.adults, children: o.children, host: Core.brandHost(c.ship.name) };
-            for (var k in disc) opts[k] = disc[k];
-            return api.cabins(opts).then(function (rows) { table[o.adults + '/' + o.children] = rows; }, function () { table[o.adults + '/' + o.children] = []; });
-          })).then(function () {
+          return groupPrices(c.ship, c.sailing, splits, connecting).then(function (g) {
             if (!alive()) return;
-            var allTypes = Core.bestCombos(table, splits, connecting);
-            var combos = allTypes.filter(function (x) { return x.best && x.best.cabins.length === f.rooms; });
-            var missing = allTypes.filter(function (x) { return combos.indexOf(x) < 0; }).map(function (x) { return x.name; });
-            combos.sort(function (a, b) { return a.best.total - b.best.total; });
-            var wanted = f.cabin === 'any' ? combos : combos.filter(function (x) { return cabinTypeOf(x.name) === f.cabin; });
-            if (wanted.length) results.push({ ship: c.ship, sailing: c.sailing, total: wanted[0].best.total, pick: wanted[0], byType: combos, missing: missing });
+            var wanted = f.cabin === 'any' ? g.byKind.slice() : g.byKind.filter(function (x) { return x.kind === f.cabin; });
+            wanted.sort(function (a, b) { return a.total - b.total; });
+            var missing = g.kinds.filter(function (k) { return k !== 'other' && !g.byKind.some(function (x) { return x.kind === k; }); });
+            if (wanted.length) results.push({ ship: c.ship, sailing: c.sailing, total: wanted[0].total, pick: wanted[0], byKind: g.byKind, missing: missing });
             else soldOut++;
-          }).then(function () { done++; if (alive()) { tick(); draw(); } return worker(); });
+          }, function () { soldOut++; }).then(function () { done++; if (alive()) { tick(); draw(); } return worker(); });
         }
         tick();
         Promise.all([worker(), worker(), worker()]);
       });
     }
+  };
+
+  /* ================= Connecting cabins by ship ================= */
+  function pairCount(code) { return Object.keys(shipPairs(code)).length; }
+
+  /* finds pairs for one ship: asks for 2 rooms of 2 adults on its next couple of sailings */
+  function scanShip(ship) {
+    return api.sailings(ship.code).then(function (ss) {
+      var soon = ss.filter(function (x) { return Core.sailDateObj(x.date) > new Date(Date.now() + 14 * 864e5); }).slice(0, 2);
+      return Promise.all(soon.map(function (sl) {
+        var o = { packageCode: ship.code + sl.voyageCode, sailDate: sl.date, currency: 'USD', host: Core.brandHost(ship.name), rooms: [{ adults: 2, children: 0 }, { adults: 2, children: 0 }] };
+        return api.roomOptions(o).then(function (ro) { learnPairs(ship.code, ro.pairs); }, function () { /* skip */ });
+      }));
+    });
+  }
+
+  views.connecting = function (v) {
+    setTitle('Connecting cabins', 'By ship and deck');
+    var listEl = h('div', null, skeleton(6)), status = h('div', { class: 'progress' });
+    var scanBtn = h('button', { class: 'btn block', text: '\u{1F50D} Scan all ships' });
+    add(v, [h('div', { class: 'card small muted', text: 'Connecting pairs come from the cruise line\'s own room selection. Only cabins that are still for sale show up, so the list grows every time you search or scan. Pairs never change, so they are saved on this device.' }),
+      scanBtn, status, listEl]);
+    var ships = [];
+    function draw() {
+      clear(listEl);
+      add(listEl, h('div', { class: 'list' }, ships.map(function (sh) {
+        var n = pairCount(sh.code);
+        return h('button', { class: 'item', onclick: function () { go('connShip', { ship: sh }); } },
+          h('div', { class: 'badge' + (sh.brand === 'celebrity' ? ' celebrity' : ''), text: shipInitials(sh.name) }),
+          h('div', { class: 'grow' }, h('div', { class: 't', text: sh.name }), h('div', { class: 's', text: (Core.SHIP_CLASSES.filter(function (c) { return c.id === Core.shipClass(sh.name); })[0] || { name: '' }).name })),
+          h('span', { class: 'pill' + (n ? ' ok' : ''), text: n ? n + ' pairs' : 'not scanned' }), h('span', { class: 'chev', text: '›' }));
+      })));
+    }
+    api.ships().then(function (s) {
+      ships = s.slice().sort(function (a, b) { return pairCount(b.code) - pairCount(a.code) || a.name.localeCompare(b.name); });
+      draw();
+    }).catch(function (e) { clear(listEl); add(listEl, errBox(e)); });
+    var running = false;
+    scanBtn.onclick = function () {
+      if (running) { running = false; return; }
+      running = true; scanBtn.textContent = 'Stop scanning';
+      var idx = 0, done = 0;
+      function tick() { clear(status); add(status, [h('span', { class: 'spin' }), 'Scanning ' + done + ' of ' + ships.length + ' ships…']); }
+      tick();
+      function worker() {
+        if (!running || idx >= ships.length || !document.body.contains(v)) return Promise.resolve();
+        var sh = ships[idx++];
+        return scanShip(sh).catch(function () {}).then(function () { done++; if (document.body.contains(v)) { tick(); draw(); } return worker(); });
+      }
+      Promise.all([worker(), worker()]).then(function () {
+        running = false; scanBtn.textContent = '\u{1F50D} Scan all ships';
+        clear(status); add(status, 'Scanned ' + done + ' ships.'); draw();
+      });
+    };
+  };
+
+  views.connShip = function (v, p) {
+    var ship = p.ship;
+    setTitle(ship.name, 'Connecting cabins');
+    var box = h('div');
+    var btn = h('button', { class: 'btn block', text: '\u{1F50D} Scan this ship now' });
+    add(v, [btn, h('div', { style: 'height:10px' }), box]);
+    function draw() {
+      clear(box);
+      var m = shipPairs(ship.code), keys = Object.keys(m);
+      if (!keys.length) { add(box, empty('\u{1F6AA}', 'No connecting pairs found yet', 'Tap "Scan this ship now", or search this ship with 2+ rooms.')); return; }
+      var upd = pref('pairsUpdated.' + ship.code, 0);
+      add(box, h('div', { class: 'notice', text: keys.length + ' connecting pairs' + (upd ? ' · updated ' + new Date(upd).toLocaleDateString() : '') }));
+      ['interior', 'ocean', 'balcony', 'suite', 'other'].forEach(function (k) {
+        var list = keys.map(function (x) { return m[x]; }).filter(function (x) { return x.kind === k; });
+        if (!list.length) return;
+        var decks = {};
+        list.forEach(function (x) { var d = String(x.a).slice(0, -3) || '?'; (decks[d] = decks[d] || []).push(x); });
+        add(box, h('div', { class: 'port-h' }, h('div', { class: 'grow' }, h('div', { class: 'port-name', text: kindName(k) })), h('span', { class: 'small muted', text: list.length + ' pairs' })));
+        add(box, h('div', { class: 'list' }, Object.keys(decks).sort(function (a, b) { return a - b; }).map(function (d) {
+          var ps = decks[d].sort(function (a, b) { return a.a - b.a; });
+          return h('div', { class: 'prod', style: 'align-items:flex-start' }, h('b', { style: 'width:62px;flex:none', text: 'Deck ' + d }),
+            h('div', { class: 'grow small' }, ps.map(function (x) { return h('div', { text: x.a + ' ↔ ' + x.b + '  · ' + x.name + (x.cat ? ' (' + x.cat + ')' : '') }); })));
+        })));
+      });
+    }
+    btn.onclick = function () {
+      btn.disabled = true; btn.textContent = 'Scanning…';
+      scanShip(ship).catch(function () {}).then(function () { btn.disabled = false; btn.textContent = '\u{1F50D} Scan this ship now'; draw(); });
+    };
+    draw();
   };
 
   /* ================= Ship: sail date picker ================= */
@@ -649,49 +792,33 @@
       var splits = Core.planSplits(group.adults, group.children, group.maxPer, group.rooms).filter(function (sp) { return sp.length === group.rooms; });
       clear(out);
       if (!splits.length) { add(out, errBox('That group doesn\'t fit in ' + group.rooms + ' rooms of up to ' + group.maxPer + ' with at least one adult in each. Change rooms or max guests per cabin.')); return; }
-      var occ = Core.occupanciesFor(splits), table = {}, done = 0, idx = 0;
-      var prog = h('div', { class: 'progress' });
-      add(out, prog);
-      function tick() { clear(prog); add(prog, [h('span', { class: 'spin' }), 'Pricing cabin combinations… ' + done + ' of ' + occ.length]); }
-      tick();
-      function worker() {
-        if (idx >= occ.length || !alive()) return Promise.resolve();
-        var o = occ[idx++];
-        return api.cabins(cabinOpts(o.adults, o.children)).then(function (rows) { table[o.adults + '/' + o.children] = rows; }, function () { table[o.adults + '/' + o.children] = []; })
-          .then(function () { done++; if (alive()) tick(); return worker(); });
-      }
-      Promise.all([worker(), worker(), worker()]).then(function () {
+      add(out, h('div', { class: 'progress' }, h('span', { class: 'spin' }), 'Asking ' + (Core.isRoyalShip(ship.name) ? 'Royal Caribbean' : 'Celebrity') + ' for ' + splits.length + ' way' + (splits.length > 1 ? 's' : '') + ' to split your group…'));
+      groupPrices(ship, sailing, splits, group.connecting).then(function (g) {
         if (!alive()) return;
         clear(out);
-        var res = Core.bestCombos(table, splits, group.connecting).filter(function (r) { return r.best; });
-        if (!res.length) {
-          add(out, empty('\u{1F6AB}', group.connecting ? 'No connecting cabins found for this group' : 'No cabin combinations available',
-            group.connecting ? 'Try turning off "Connecting cabins only".' : 'The sailing may be sold out for these cabin sizes.'));
+        if (!g.byKind.length) {
+          add(out, empty('\u{1F6AB}', group.connecting ? 'No connecting rooms open for this group' : 'No room combinations available',
+            group.connecting ? 'Try turning off "Connecting cabins only", or another split.' : 'The sailing may be sold out for these room sizes.'));
           return;
         }
-        var cur = currency();
-        add(out, h('div', { class: 'notice', text: 'Cheapest way to fit ' + who(group.adults, group.children) + ' on this sailing, by cabin type. Totals add up each cabin\'s ' + (discLabels.length ? 'price with your discounts' : 'public price') + ' (taxes & fees included).' }));
-        res.forEach(function (r) {
-          var best = r.best;
-          var others = r.options.slice(1, 4);
-          var more = h('div', { hidden: true }, others.map(function (o) {
-            return h('div', { class: 'row small', style: 'justify-content:space-between;padding:6px 0;border-top:1px solid var(--line)' },
-              h('span', { text: o.cabins.map(function (c) { return who(c.adults, c.children); }).join('  |  ') }), h('b', { text: money(o.total, cur) }));
-          }));
+        var cur = currency(), n = group.adults + group.children;
+        add(out, h('div', { class: 'notice', text: 'Cheapest way to fit ' + who(group.adults, group.children) + ' in ' + group.rooms + ' rooms, by cabin type' + (group.connecting ? ', connecting rooms only' : '') + '. ' + (discLabels.length ? 'Prices with your discounts' : 'Public prices') + ', taxes & fees included.' }));
+        g.byKind.forEach(function (b) {
           add(out, h('div', { class: 'card' },
-            h('div', { class: 'row' }, h('div', { class: 'grow' }, h('b', { style: 'font-size:17px', text: r.name }),
-              best.connecting ? h('div', null, h('span', { class: 'pill ok', text: '\u{1F6AA} Connecting' })) : null),
-              h('div', { class: 'price' }, h('b', { text: money(best.total, cur) }), h('span', { class: 'u', text: money(best.total / (group.adults + group.children), cur) + ' pp' }))),
-            h('div', { style: 'margin-top:8px' }, best.cabins.map(function (c, i) {
+            h('div', { class: 'row' }, h('div', { class: 'grow' }, h('b', { style: 'font-size:17px', text: kindName(b.kind) }),
+              h('div', { class: 'small muted', text: b.name + (b.code ? ' (' + b.code + ')' : '') }),
+              b.connecting ? h('div', null, h('span', { class: 'pill ok', text: '\u{1F6AA} Connecting' })) : null),
+              h('div', { class: 'price' }, h('b', { text: money(b.total, cur) }), h('span', { class: 'u', text: money(b.total / n, cur) + ' pp' }))),
+            h('div', { style: 'margin-top:8px' }, b.split.map(function (c, i) {
               return h('div', { class: 'row small', style: 'justify-content:space-between;padding:4px 0' },
-                h('span', { text: (best.cabins.length > 1 ? 'Cabin ' + (i + 1) + ': ' : 'One cabin: ') + who(c.adults, c.children) + (c.subtype ? ' · ' + c.subtype : '') }),
-                h('span', { text: money(c.price, cur) }));
+                h('span', { text: 'Room ' + (i + 1) + ': ' + who(c.adults, c.children) }), h('span', { text: b.perRoom[i] ? money(b.perRoom[i], cur) : '' }));
             })),
-            others.length ? h('button', { class: 'btn ghost block', style: 'margin-top:8px;min-height:38px;font-size:14px', text: 'Other splits (' + others.length + ')', onclick: function () { more.hidden = !more.hidden; } }) : null,
-            more));
+            b.pairs && b.pairs.length ? h('div', { class: 'small', style: 'margin-top:6px' }, h('b', { text: 'Open connecting pairs: ' }), pairText(b.pairs)) : null));
         });
-        add(out, h('div', { class: 'notice', text: 'Prices are per cabin; actual connecting cabin pairs and room numbers are confirmed when you book. Every cabin needs at least one adult.' }));
-      });
+        var missing = g.kinds.filter(function (k) { return k !== 'other' && !g.byKind.some(function (x) { return x.kind === k; }); });
+        if (missing.length) add(out, h('div', { class: 'notice', text: missing.map(kindName).join(', ') + ': ' + (group.connecting ? 'no connecting rooms open for this group.' : 'nothing that fits this group.') }));
+        add(out, h('div', { class: 'notice', text: g.source === 'rooms' ? 'Live from the cruise line\'s room selection, same as their booking site. Pick the exact pair when you book.' : 'Connecting info was not available; showing per-room prices.' }));
+      }).catch(function (e) { if (alive()) { clear(out); add(out, errBox(e)); } });
     }
     draw();
   }
