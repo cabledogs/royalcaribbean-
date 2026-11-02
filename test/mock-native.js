@@ -10,26 +10,25 @@
     dining: [product('7001', 'Unlimited Dining Package', 299), product('7002', 'Chops Grille Dinner', 64.99)],
     shorex: [product('9001', 'Cozumel Beach Break', 79), product('9002', 'Mayan Ruins Tour', 129)]
   };
-  // rooms service, shaped like the real reply captured by tools/probe-connecting.js
+  // rooms service, shaped like the real reply (from royalcaribbean.com's room-selection page):
+  // only rooms[0] carries options, priced for rooms[0]'s guests; connecting flags apply to the group
   function roomsReply(body) {
-    var b = JSON.parse(body);
-    function cat(code, alt, base, conn, n, pairs, avail) {
-      var f = 1 + 0.35 * (n - 2), amt = Math.round(base * f * 100) / 100;
-      // like the real reply: connecting markers and cabin pairs only on the first room's list
-      var marked = conn && b.rooms.length > 1 && roomIdx === 0;
-      var cabins = marked ? pairs.map(function (p) { return { cabinNumber: p[0], positionCode: 'AF', connectingCabin: { cabinNumber: p[1], positionCode: 'AF' } }; }) : (pairs || []).map(function (p) { return { cabinNumber: p[0], positionCode: 'AF' }; });
-      return { pricing: { invoice: { total: amt }, amount: amt }, categoryCode: code, fareCode: 'CG1', connecting: marked, image: { alt: alt }, stateroomsAvailable: avail === undefined ? 10 : avail, cabins: cabins };
+    var b = JSON.parse(body), multi = b.rooms.length > 1, r0 = b.rooms[0], n = r0.adultCount + r0.childCount;
+    function sub(code, name, base, conn, pairs, avail, guarantee) {
+      var amt = Math.round(base * (1 + 0.35 * (n - 2)) * 100) / 100;
+      var o = { code: code, name: name, guarantee: !!guarantee, categoryCode: code, connecting: !!(conn && multi), pricing: { invoice: { total: amt } },
+        image: { alt: name }, stateroomsAvailable: avail === undefined ? 10 : avail };
+      if (conn && multi && pairs) o.cabins = pairs.map(function (p) { return { cabinNumber: p[0], connectingCabin: { cabinNumber: p[1] } }; });
+      return o;
     }
-    var roomIdx = -1;
-    return { sailing: { sailDate: b.sailDate }, rooms: b.rooms.map(function (r) {
-      var n = r.adultCount + r.childCount;
-      roomIdx++;
-      return { request: r, room: { stateroomType: { name: 'Interior' }, categoryCode: 'ZQ', pricing: { invoice: { total: 1 } } },
+    return { sailing: { sailDate: b.sailDate }, rooms: b.rooms.map(function (r, i) {
+      if (i > 0) return { request: { adultCount: r.adultCount, childCount: r.childCount, editMode: false, reset: true }, room: {} };
+      return { request: r, room: { code: 'ZQ' },
         options: { stateroomTypes: [
-          { name: 'Interior', summary: 'Our Interior rooms', connecting: true, categories: [cat('ZQ', 'Interior Quad Guarantee', 1300, false, n), cat('T5', 'Surfside Family Interior', 1490, true, n, [['8341', '8343'], ['8343', '8341'], ['8721', '8723']])] },
-          { name: 'Ocean View', summary: 'Soak in', connecting: true, categories: [cat('YQ', 'Ocean View Quad Guarantee', 1600, false, n), cat('N5', 'Ocean View', 1750, true, n, [['9101', '9103']])] },
-          { name: 'Balcony', summary: 'Fresh air', connecting: false, categories: [cat('XQ', 'Balcony Guarantee', 2100, false, n), cat('XB', 'Balcony', 2300, false, n, [], 0)] },
-          { name: 'Suite', summary: 'Suites', connecting: false, categories: n > 4 ? [] : [cat('J4', 'Junior Suite', 4100, false, n)] }
+          { code: 'INTERIOR', name: 'Interior', summary: 'Our Interior rooms', connecting: multi, stateroomSubtypes: [sub('ZQ', 'Interior Quad Guarantee', 1300, false, null, 10, true), sub('T5', 'Surfside Family Interior', 1490, true, [['8341', '8343'], ['8721', '8723']])] },
+          { code: 'OUTSIDE', name: 'Ocean View', summary: 'Soak in', connecting: multi, stateroomSubtypes: [sub('YQ', 'Ocean View Quad Guarantee', 1600, false, null, 10, true), sub('N5', 'Ocean View', 1750, true, [['9101', '9103']])] },
+          { code: 'BALCONY', name: 'Balcony', summary: 'Fresh air', connecting: false, stateroomSubtypes: [sub('XQ', 'Balcony Guarantee', 2100, false, null, 10, true), sub('XB', 'Balcony', 2300, false, null, 0)] },
+          { code: 'DELUXE', name: 'Suite', summary: 'Suites', connecting: false, stateroomSubtypes: n > 4 ? [] : [sub('J4', 'Junior Suite', 4100, false)] }
         ] } };
     }) };
   }

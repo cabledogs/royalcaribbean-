@@ -31,13 +31,20 @@ const roomList = rooms.map(r => { const [a, c] = r.split('+').map(Number); retur
     console.log('Where Royal put the categories:');
     for (const [p, w] of Object.entries(where)) console.log('  ' + p + '  categories=' + w.cats + ' connecting=' + w.connectingTrue + ' cabinPairs=' + w.pairs);
     console.log('Started from category ' + ro.start.subtype + ' (' + ro.start.typeCode + ')');
-    ro.rooms.forEach((list, i) => {
-      console.log('Room ' + (i + 1) + ' (' + rooms[i] + '): ' + list.length + ' categories, connecting: ' + list.filter(c => c.connecting).map(c => c.code + ' ' + c.name + ' $' + c.price).join(' | '));
-    });
-    console.log('\nCheapest per cabin type, any rooms:');
-    Core.bestByKind(ro, false).forEach(b => console.log('  ' + b.kind.padEnd(9) + b.code.padEnd(4) + ' $' + b.total + '  ' + b.name));
+    console.log('Room 1 (' + rooms[0] + ') lists ' + ro.options.length + ' room types for sale.');
+    console.log('Connecting: ' + (ro.options.filter(c => c.connecting).map(c => c.kind + ' ' + c.code + ' ' + c.name + ' $' + c.price).join(' | ') || 'none'));
+    // reprice every other room size by asking with that size first, like the app does
+    const byOcc = {}; byOcc[roomList[0].adults + '/' + roomList[0].children] = ro;
+    for (let i = 1; i < roomList.length; i++) {
+      const key = roomList[i].adults + '/' + roomList[i].children;
+      if (byOcc[key]) continue;
+      const order = [roomList[i]].concat(roomList.filter((x, k) => k !== i));
+      byOcc[key] = await Core.getRoomOptions(upstream, { packageCode: pkg, sailDate: date, currency: 'USD', host: 'www.royalcaribbean.com', rooms: order });
+    }
+    console.log('\nCheapest per cabin type, all rooms same type:');
+    Core.combineSplit(roomList, ro, byOcc, false).forEach(b => console.log('  ' + b.kind.padEnd(9) + b.code.padEnd(4) + ' $' + b.total + '  ' + b.name + (b.connecting ? '  (connecting)' : '')));
     console.log('Cheapest per cabin type, connecting only:');
-    Core.bestByKind(ro, true).forEach(b => console.log('  ' + b.kind.padEnd(9) + b.code.padEnd(4) + ' $' + b.total + '  ' + b.name + '  pairs: ' + b.pairs.map(p => p.join('&')).join(', ')));
+    Core.combineSplit(roomList, ro, byOcc, true).forEach(b => console.log('  ' + b.kind.padEnd(9) + b.code.padEnd(4) + ' $' + b.total + '  ' + b.name + '  pairs: ' + (b.pairs.map(p => p[0] + '&' + p[1]).join(', ') || '-')));
     console.log('\nConnecting pairs seen: ' + ro.pairs.length);
   } catch (e) { console.log('FAILED:', e.message); }
   process.exit(0);

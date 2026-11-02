@@ -471,96 +471,104 @@
     var j = parseJson(r.body);
     if (!j || !Array.isArray(j.rooms)) throw new Error('Unexpected room options reply');
     var res = parseRoomOptions(j);
+    res.rooms = (o.rooms || []).map(function (r) { return { adults: r.adults, children: r.children || 0 }; });
     res.start = start;
     if (o.keepRaw) res.raw = j;
     return res;
   }
 
+  /*
+   * Royal's multi-room reply (captured from the real site):
+   *   rooms[0].options.stateroomTypes[] = {code: 'INTERIOR'|'OUTSIDE'|'BALCONY'|'DELUXE', name, connecting,
+   *       stateroomSubtypes[]: {code, name, guarantee, categoryCode, connecting, pricing.invoice.total,
+   *                             stateroomsAvailable, roomsLeft, image.alt}}
+   *   rooms[1..] carry no options (only a placeholder "room"), so the list for the whole group comes
+   *   from room 1, priced for room 1's guests. "connecting" there means a connecting pair is open.
+   * Returns {options: [{code, categoryCode, name, kind, price, connecting, available, guarantee}], pairs}
+   */
+  var TYPE_KINDS = { INTERIOR: 'interior', OUTSIDE: 'ocean', OCEANVIEW: 'ocean', BALCONY: 'balcony', VERANDA: 'balcony',
+    CONCIERGE: 'balcony', AQUA: 'balcony', DELUXE: 'suite', SUITE: 'suite' };
+
   function parseRoomOptions(j) {
     var pairsSeen = {}, pairs = [];
-    function collect(rm) {
-      var cats = {};
-      (function walk(node, ancestors) {
-        if (!node || typeof node !== 'object') return;
-        if (Array.isArray(node)) { node.forEach(function (x) { walk(x, ancestors); }); return; }
-        if (typeof node.categoryCode === 'string' && node.pricing && typeof node.pricing === 'object') {
-          var inv = node.pricing.invoice || {};
-          var price = typeof inv.total === 'number' ? inv.total : (typeof node.pricing.amount === 'number' ? node.pricing.amount : null);
-          var typeName = node.stateroomType && typeof node.stateroomType.name === 'string' ? node.stateroomType.name : '';
-          for (var a = ancestors.length - 1; a >= 0 && !typeName; a--) {
-            if (typeof ancestors[a].name === 'string' && typeof ancestors[a].summary === 'string') typeName = ancestors[a].name;
-          }
-          var catName = (node.image && typeof node.image.alt === 'string' && node.image.alt) || (typeof node.name === 'string' && node.name) || node.categoryCode;
-          var kind = cabinTypeOf(typeName);
-          if (kind === 'other') kind = cabinTypeOf(catName);
-          var cabinPairs = [];
-          (Array.isArray(node.cabins) ? node.cabins : []).forEach(function (c) {
-            var other = c && c.connectingCabin && c.connectingCabin.cabinNumber;
-            if (!c || !c.cabinNumber || !other) return;
-            cabinPairs.push([String(c.cabinNumber), String(other)]);
-            var key = [String(c.cabinNumber), String(other)].sort().join('&');
-            if (!pairsSeen[key]) { pairsSeen[key] = 1; pairs.push([String(c.cabinNumber), String(other), node.categoryCode, kind, catName]); }
-          });
-          var cur = cats[node.categoryCode];
-          if (!cur) cur = cats[node.categoryCode] = { code: node.categoryCode, name: catName, kind: kind, price: null, connecting: false, available: null, guarantee: false, pairs: [] };
-          if (price !== null && (cur.price === null || price < cur.price)) cur.price = price;
-          if (node.connecting === true || cabinPairs.length) cur.connecting = true;
-          if (typeof node.stateroomsAvailable === 'number') cur.available = node.stateroomsAvailable;
-          if (node.guarantee === true || /guarantee/i.test(catName)) cur.guarantee = true;
-          cabinPairs.forEach(function (p) {
-            if (!cur.pairs.some(function (q) { return q[0] === p[1] && q[1] === p[0] || q[0] === p[0] && q[1] === p[1]; })) cur.pairs.push(p);
-          });
-          if (cur.name === cur.code && catName !== cur.code) cur.name = catName;
-        }
-        var next = ancestors.concat([node]);
-        Object.keys(node).forEach(function (k) { if (node[k] && typeof node[k] === 'object') walk(node[k], next); });
-      })(rm, []);
-      return Object.keys(cats).map(function (k) { return cats[k]; }).filter(function (c) { return c.price !== null && c.available !== 0; });
-    }
-    var rooms = (j.rooms || []).map(collect);
-    // categories may sit outside rooms[] (e.g. one shared options list): then use the whole reply for every room
-    if (!rooms.some(function (l) { return l.length; })) {
-      var shared = collect(Object.assign({}, j, { rooms: undefined }));
-      if (shared.length) rooms = (j.rooms && j.rooms.length ? j.rooms : [0]).map(function () { return shared; });
-    }
-    // Royal marks connecting categories / cabin pairs once for the whole multi-room request (seen on room 1
-    // only in a real reply), so a category marked on ANY room counts for the group
-    var connCodes = {}, pairsByCode = {};
-    rooms.forEach(function (l) { l.forEach(function (c) {
-      if (c.connecting) connCodes[c.code] = 1;
-      if (c.pairs.length && !pairsByCode[c.code]) pairsByCode[c.code] = c.pairs;
-    }); });
-    rooms = rooms.map(function (l) { return l.map(function (c) {
-      return Object.assign({}, c, { connecting: !!connCodes[c.code], pairs: c.pairs.length ? c.pairs : (pairsByCode[c.code] || []) });
-    }); });
-    return { rooms: rooms, pairs: pairs };
+    // connecting cabin pairs can appear anywhere (room-location data)
+    (function walk(node, cat, kind) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) { node.forEach(function (x) { walk(x, cat, kind); }); return; }
+      if (typeof node.categoryCode === 'string') cat = node.categoryCode;
+      if (node.cabinNumber && node.connectingCabin && node.connectingCabin.cabinNumber) {
+        var a = String(node.cabinNumber), b = String(node.connectingCabin.cabinNumber);
+        var key = [a, b].sort().join('&');
+        if (!pairsSeen[key]) { pairsSeen[key] = 1; pairs.push([a, b, cat || '', kind || '', '']); }
+      }
+      Object.keys(node).forEach(function (k) { if (node[k] && typeof node[k] === 'object') walk(node[k], cat, kind); });
+    })(j, '', '');
+
+    var options = [];
+    var first = (j.rooms || [])[0] || {};
+    var types = first.options && Array.isArray(first.options.stateroomTypes) ? first.options.stateroomTypes : [];
+    types.forEach(function (t) {
+      if (!t) return;
+      var kind = TYPE_KINDS[String(t.code || '').toUpperCase()] || cabinTypeOf(t.name);
+      (t.stateroomSubtypes || []).forEach(function (st) {
+        if (!st) return;
+        var inv = st.pricing && st.pricing.invoice;
+        var price = inv && typeof inv.total === 'number' ? inv.total : (st.pricing && typeof st.pricing.amount === 'number' ? st.pricing.amount : null);
+        var avail = typeof st.stateroomsAvailable === 'number' ? st.stateroomsAvailable : (typeof st.roomsLeft === 'number' ? st.roomsLeft : null);
+        if (price === null || avail === 0) return;
+        options.push({
+          code: String(st.code || st.categoryCode || ''), categoryCode: String(st.categoryCode || st.code || ''),
+          name: (typeof st.name === 'string' && st.name) || (st.image && st.image.alt) || st.code,
+          kind: kind === 'other' ? cabinTypeOf(st.name) : kind, price: price,
+          connecting: st.connecting === true, available: avail, guarantee: st.guarantee === true
+        });
+      });
+    });
+    // name the pairs' categories where we can
+    pairs.forEach(function (p) {
+      options.forEach(function (o) { if (o.categoryCode === p[2] || o.code === p[2]) { p[3] = o.kind; p[4] = o.name; } });
+    });
+    return { options: options, pairs: pairs };
   }
 
   /*
-   * Cheapest option per cabin kind for one split, all rooms in the SAME category (that is how
-   * connecting pairs are sold). Returns [{kind, name, code, total, perRoom:[price...], connecting, pairs}]
+   * One split of the group, e.g. [{2,1},{2,1}] or [{2,0},{4,0}].
+   * byOcc: {"a/c": parseRoomOptions(reply where a room of that size was listed FIRST)}
+   * first: the reply for the split in its own order (its "connecting" flags apply to the whole group).
+   * Same subtype for every room (that is how Royal sells a set of matching / connecting rooms).
+   * Returns the cheapest option per kind: [{kind, name, code, total, perRoom, connecting, pairs}]
    */
-  function bestByKind(roomOptions, connectingOnly) {
-    var lists = roomOptions.rooms;
-    if (!lists.length) return [];
+  function combineSplit(split, first, byOcc, connectingOnly) {
     var best = {};
-    lists[0].forEach(function (c0) {
-      var per = [], all = true, conn = true;
-      for (var i = 0; i < lists.length; i++) {
-        var c = null;
-        lists[i].forEach(function (x) { if (x.code === c0.code) c = x; });
-        if (!c) { all = false; break; }
-        per.push(c.price);
-        if (!c.connecting) conn = false;
+    var multi = split.length > 1;
+    first.options.forEach(function (o) {
+      if (connectingOnly && multi && !o.connecting) return;
+      var per = [];
+      for (var i = 0; i < split.length; i++) {
+        var list = byOcc[split[i].adults + '/' + split[i].children];
+        if (!list) return;
+        var hit = null;
+        list.options.forEach(function (x) { if (x.code === o.code) hit = x; });
+        if (!hit) return;
+        per.push(hit.price);
       }
-      if (!all) return;
-      var multi = lists.length > 1;
-      if (connectingOnly && multi && !conn) return;
       var total = Math.round(per.reduce(function (a, b) { return a + b; }, 0) * 100) / 100;
-      var cur = best[c0.kind];
-      if (!cur || total < cur.total) best[c0.kind] = { kind: c0.kind, name: c0.name, code: c0.code, total: total, perRoom: per, connecting: multi && conn, guarantee: c0.guarantee, pairs: c0.pairs.slice(0, 6) };
+      var cur = best[o.kind];
+      if (!cur || total < cur.total) {
+        best[o.kind] = { kind: o.kind, name: o.name, code: o.categoryCode || o.code, total: total, perRoom: per,
+          connecting: multi && o.connecting, guarantee: o.guarantee,
+          pairs: first.pairs.filter(function (p) { return p[2] === o.categoryCode || p[2] === o.code; }).slice(0, 6) };
+      }
     });
     return ['interior', 'ocean', 'balcony', 'suite', 'other'].filter(function (k) { return best[k]; }).map(function (k) { return best[k]; });
+  }
+
+  /* kept for older callers: options of a single reply, no per-size repricing */
+  function bestByKind(ro, connectingOnly) {
+    var n = ro.rooms ? ro.rooms.length : 1;
+    var split = [];
+    for (var i = 0; i < n; i++) split.push({ adults: 0, children: 0 });
+    return combineSplit(split, ro, { '0/0': ro }, connectingOnly);
   }
 
   async function getCabins(http, o) {
@@ -805,7 +813,7 @@
     ALLOWED_HOSTS: ALLOWED_HOSTS,
     getShips: getShips, getSailings: getSailings, getItinerary: getItinerary,
     getCategories: getCategories, getProducts: getProducts, getCabins: getCabins,
-    parseCabins: parseCabins, getRoomOptions: getRoomOptions, parseRoomOptions: parseRoomOptions, bestByKind: bestByKind,
+    parseCabins: parseCabins, getRoomOptions: getRoomOptions, parseRoomOptions: parseRoomOptions, bestByKind: bestByKind, combineSplit: combineSplit,
     cabinTypeOf: cabinTypeOf, CABIN_KIND_NAMES: CABIN_KIND_NAMES, planSplits: planSplits, occupanciesFor: occupanciesFor, bestCombos: bestCombos, cabinUrl: cabinUrl, CABIN_HEADERS: CABIN_HEADERS, extractJsonArray: extractJsonArray,
     checkAlert: checkAlert, login: login, checkPurchases: checkPurchases, getProfile: getProfile, discountOpts: discountOpts, discountLabels: discountLabels,
     classifyCategory: classifyCategory, parsePrice: parsePrice, productPrice: productPrice,

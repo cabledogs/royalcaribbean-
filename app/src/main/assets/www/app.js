@@ -251,6 +251,18 @@
     if (changed) { setPref('pairs.' + code, m); setPref('pairsUpdated.' + code, Date.now()); }
   }
 
+  /* room types Royal said have connecting rooms on a ship (kept with the pairs) */
+  function shipConnCats(code) { return pref('conncats.' + code, {}); }
+  function learnConnCats(code, ro) {
+    if (!ro || !ro.options || !ro.rooms || ro.rooms.length < 2) return;
+    var m = shipConnCats(code), changed = false;
+    ro.options.forEach(function (o) {
+      if (!o.connecting || m[o.code]) return;
+      m[o.code] = { code: o.categoryCode || o.code, kind: o.kind, name: o.name }; changed = true;
+    });
+    if (changed) { setPref('conncats.' + code, m); setPref('pairsUpdated.' + code, Date.now()); }
+  }
+
   api.roomOptions = function (o) {
     return cached('ro.' + JSON.stringify(o), 30 * 60e3, function () { return Core.getRoomOptions(http, o); });
   };
@@ -268,13 +280,28 @@
     }
     var best = {}, kinds = {}, ok = 0;
     return Promise.all(splits.map(function (sp) {
-      var o = base(); o.rooms = sp.map(function (c) { return { adults: c.adults, children: c.children }; });
-      return api.roomOptions(o).then(function (ro) {
-        ok++;
-        learnPairs(ship.code, ro.pairs);
-        (ro.rooms[0] || []).forEach(function (c) { kinds[c.kind] = 1; });
-        Core.bestByKind(ro, connecting).forEach(function (b) {
-          if (!best[b.kind] || b.total < best[b.kind].total) { b.split = sp; best[b.kind] = b; }
+      function ask(rooms) {
+        var o = base(); o.rooms = rooms.map(function (c) { return { adults: c.adults, children: c.children }; });
+        return api.roomOptions(o);
+      }
+      // Royal prices only the FIRST room of a request, so ask once per room size with that size first
+      return ask(sp).then(function (first) {
+        learnPairs(ship.code, first.pairs); learnConnCats(ship.code, first);
+        var byOcc = {}, jobs = [];
+        byOcc[sp[0].adults + '/' + sp[0].children] = first;
+        sp.forEach(function (c, i) {
+          var key = c.adults + '/' + c.children;
+          if (byOcc[key] !== undefined) return;
+          byOcc[key] = null;
+          var order = [c].concat(sp.filter(function (x, j) { return j !== i; }));
+          jobs.push(ask(order).then(function (ro) { byOcc[key] = ro; learnPairs(ship.code, ro.pairs); }, function () { delete byOcc[key]; }));
+        });
+        return Promise.all(jobs).then(function () {
+          ok++;
+          first.options.forEach(function (c) { kinds[c.kind] = 1; });
+          Core.combineSplit(sp, first, byOcc, connecting).forEach(function (b) {
+            if (!best[b.kind] || b.total < best[b.kind].total) { b.split = sp; best[b.kind] = b; }
+          });
         });
       }, function () { /* try the other splits */ });
     })).then(function () {
@@ -480,6 +507,7 @@
 
   /* ================= Connecting cabins by ship ================= */
   function pairCount(code) { return Object.keys(shipPairs(code)).length; }
+  function catCount(code) { return Object.keys(shipConnCats(code)).length; }
 
   /* finds pairs for one ship: asks for 2 rooms of 2 adults on its next couple of sailings */
   function scanShip(ship) {
@@ -487,7 +515,7 @@
       var soon = ss.filter(function (x) { return Core.sailDateObj(x.date) > new Date(Date.now() + 14 * 864e5); }).slice(0, 2);
       return Promise.all(soon.map(function (sl) {
         var o = { packageCode: ship.code + sl.voyageCode, sailDate: sl.date, currency: 'USD', host: Core.brandHost(ship.name), rooms: [{ adults: 2, children: 0 }, { adults: 2, children: 0 }] };
-        return api.roomOptions(o).then(function (ro) { learnPairs(ship.code, ro.pairs); }, function () { /* skip */ });
+        return api.roomOptions(o).then(function (ro) { learnPairs(ship.code, ro.pairs); learnConnCats(ship.code, ro); }, function () { /* skip */ });
       }));
     });
   }
@@ -502,15 +530,15 @@
     function draw() {
       clear(listEl);
       add(listEl, h('div', { class: 'list' }, ships.map(function (sh) {
-        var n = pairCount(sh.code);
+        var n = pairCount(sh.code), nc = catCount(sh.code);
         return h('button', { class: 'item', onclick: function () { go('connShip', { ship: sh }); } },
           h('div', { class: 'badge' + (sh.brand === 'celebrity' ? ' celebrity' : ''), text: shipInitials(sh.name) }),
           h('div', { class: 'grow' }, h('div', { class: 't', text: sh.name }), h('div', { class: 's', text: (Core.SHIP_CLASSES.filter(function (c) { return c.id === Core.shipClass(sh.name); })[0] || { name: '' }).name })),
-          h('span', { class: 'pill' + (n ? ' ok' : ''), text: n ? n + ' pairs' : 'not scanned' }), h('span', { class: 'chev', text: '›' }));
+          h('span', { class: 'pill' + (n || nc ? ' ok' : ''), text: n ? n + ' pairs' : nc ? nc + ' room types' : 'not scanned' }), h('span', { class: 'chev', text: '›' }));
       })));
     }
     api.ships().then(function (s) {
-      ships = s.slice().sort(function (a, b) { return pairCount(b.code) - pairCount(a.code) || a.name.localeCompare(b.name); });
+      ships = s.slice().sort(function (a, b) { return pairCount(b.code) - pairCount(a.code) || catCount(b.code) - catCount(a.code) || a.name.localeCompare(b.name); });
       draw();
     }).catch(function (e) { clear(listEl); add(listEl, errBox(e)); });
     var running = false;
@@ -540,7 +568,18 @@
     add(v, [btn, h('div', { style: 'height:10px' }), box]);
     function draw() {
       clear(box);
-      var m = shipPairs(ship.code), keys = Object.keys(m);
+      var m = shipPairs(ship.code), keys = Object.keys(m), cats = shipConnCats(ship.code), ck = Object.keys(cats);
+      if (ck.length) {
+        add(box, h('div', { class: 'port-h' }, h('div', { class: 'grow' }, h('div', { class: 'port-name', text: 'Room types with connecting rooms' })), h('span', { class: 'small muted', text: ck.length + ' types' })));
+        add(box, h('div', { class: 'list' }, ['interior', 'ocean', 'balcony', 'suite', 'other'].map(function (k) {
+          var l = ck.map(function (x) { return cats[x]; }).filter(function (x) { return x.kind === k; });
+          if (!l.length) return null;
+          return h('div', { class: 'prod', style: 'align-items:flex-start' }, h('b', { style: 'width:92px;flex:none', text: kindName(k) }),
+            h('div', { class: 'grow small' }, l.map(function (x) { return h('div', { text: x.name + ' (' + x.code + ')' }); })));
+        }).filter(Boolean)));
+        add(box, h('div', { style: 'height:10px' }));
+      }
+      if (!keys.length && ck.length) { add(box, h('div', { class: 'small muted', text: 'Royal does not list the exact cabin numbers until you pick a room type on its site.' })); return; }
       if (!keys.length) { add(box, empty('\u{1F6AA}', 'No connecting pairs found yet', 'Tap "Scan this ship now", or search this ship with 2+ rooms.')); return; }
       var upd = pref('pairsUpdated.' + ship.code, 0);
       add(box, h('div', { class: 'notice', text: keys.length + ' connecting pairs' + (upd ? ' · updated ' + new Date(upd).toLocaleDateString() : '') }));
