@@ -38,6 +38,11 @@ const path = require('path');
   await page.click('button[aria-label="Price alert for Mayan Ruins Tour"]');
   await page.waitForSelector('#sheet:not([hidden])');
   await shot('5-alert-sheet');
+  // a target above today's price ($129) is refused
+  await page.fill('input[aria-label="Target price"]', '150');
+  await page.click('text=Create alert');
+  await page.waitForSelector("text=Your price has to be below today's price of $129");
+  await page.fill('input[aria-label="Target price"]', '110');
   await page.click('text=Create alert');
   await page.waitForFunction(() => window.__bg && window.__bg.background === true);
   await page.click('[data-tab=cabins]'); await page.waitForSelector('text=Balcony');

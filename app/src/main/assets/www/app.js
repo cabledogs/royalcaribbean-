@@ -90,12 +90,14 @@
     base.id = alertId(base);
     var existing = findAlert(base);
     var mode = existing && existing.target ? 'below' : 'any';
-    var suggested = existing && existing.target ? existing.target : Math.floor(base.initialPrice * 0.9);
-    var input = h('input', { type: 'number', inputmode: 'decimal', min: '0', step: '1', value: suggested, 'aria-label': 'Target price' });
+    var nowPrice = base.initialPrice;
+    var suggested = existing && existing.target && existing.target < nowPrice ? existing.target : Math.floor(nowPrice * 0.9);
+    var input = h('input', { type: 'number', inputmode: 'decimal', min: '0', max: String(nowPrice), step: '1', value: suggested, 'aria-label': 'Target price' });
+    var err = h('div', { class: 'small', style: 'color:var(--coral);margin-top:6px', hidden: true });
     var rAny = h('input', { type: 'radio', name: 'am', checked: mode === 'any' });
     var rBelow = h('input', { type: 'radio', name: 'am', checked: mode === 'below' });
     var lAny = h('label', { class: 'radio' + (mode === 'any' ? ' on' : '') }, rAny, h('div', null, h('b', { text: 'Any price drop' }), h('div', { class: 'small muted', text: 'Alert me when it goes below ' + money(base.initialPrice, base.currency) })));
-    var lBelow = h('label', { class: 'radio' + (mode === 'below' ? ' on' : '') }, rBelow, h('div', { class: 'grow' }, h('b', { text: 'Drops to my price' }), h('div', { class: 'field', style: 'margin:6px 0 0' }, input)));
+    var lBelow = h('label', { class: 'radio' + (mode === 'below' ? ' on' : '') }, rBelow, h('div', { class: 'grow' }, h('b', { text: 'Drops to my price' }), h('div', { class: 'field', style: 'margin:6px 0 0' }, input), err));
     function sync() { lAny.classList.toggle('on', rAny.checked); lBelow.classList.toggle('on', rBelow.checked); }
     rAny.onchange = rBelow.onchange = sync;
     input.onfocus = function () { rBelow.checked = true; sync(); };
@@ -115,13 +117,17 @@
         h('button', { class: 'btn', text: existing ? 'Save' : 'Create alert', onclick: function () {
           var target = rBelow.checked ? parseFloat(input.value) : null;
           if (rBelow.checked && !(target > 0)) { input.focus(); return; }
+          if (rBelow.checked && target >= nowPrice) {
+            err.textContent = 'Your price has to be below today\'s price of ' + money(nowPrice, base.currency) + '.';
+            err.hidden = false; input.focus(); return;
+          }
           var a = existing || base;
           if (!existing) {
             a.created = new Date().toISOString(); a.lastPrice = base.initialPrice; a.lowestSeen = base.initialPrice; a.status = 'watching';
             alerts.unshift(a);
           }
           a.target = target;
-          a.notifiedPrice = null;
+          if (!existing) a.notifiedPrice = null;
           saveAlerts(); closeSheet(); if (bellBtn) bellBtn.classList.add('on');
           // Android: alerts only help if the phone checks on its own, so switch background checks on with the first alert
           if (P.features.background === true) P.getSettings().then(function (st) {
