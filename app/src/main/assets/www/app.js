@@ -278,7 +278,7 @@
       for (var k in disc) o[k] = disc[k];
       return o;
     }
-    var best = {}, kinds = {}, ok = 0;
+    var best = {}, kinds = {}, ok = 0, lastErr = '';
     return Promise.all(splits.map(function (sp) {
       function ask(rooms) {
         var o = base(); o.rooms = rooms.map(function (c) { return { adults: c.adults, children: c.children }; });
@@ -303,7 +303,7 @@
             if (!best[b.kind] || b.total < best[b.kind].total) { b.split = sp; best[b.kind] = b; }
           });
         });
-      }, function () { /* try the other splits */ });
+      }, function (e) { lastErr = (e && e.message) || String(e); /* try the other splits */ });
     })).then(function () {
       if (ok) return { byKind: ['interior', 'ocean', 'balcony', 'suite', 'other'].filter(function (k) { return best[k]; }).map(function (k) { return best[k]; }), kinds: Object.keys(kinds), source: 'rooms' };
       // fallback: older per-cabin page (no connecting flags for most categories)
@@ -323,7 +323,7 @@
           }
         });
         if (!out.length && !Object.keys(seen).length) throw new Error('Could not get prices for this sailing');
-        return { byKind: out, kinds: Object.keys(seen), source: 'fallback' };
+        return { byKind: out, kinds: Object.keys(seen), source: 'fallback', error: lastErr };
       });
     });
   }
@@ -856,7 +856,7 @@
         });
         var missing = g.kinds.filter(function (k) { return k !== 'other' && !g.byKind.some(function (x) { return x.kind === k; }); });
         if (missing.length) add(out, h('div', { class: 'notice', text: missing.map(kindName).join(', ') + ': ' + (group.connecting ? 'no connecting rooms open for this group.' : 'nothing that fits this group.') }));
-        add(out, h('div', { class: 'notice', text: g.source === 'rooms' ? 'Live from the cruise line\'s room selection, same as their booking site. Pick the exact pair when you book.' : 'Connecting info was not available; showing per-room prices.' }));
+        add(out, h('div', { class: 'notice', text: g.source === 'rooms' ? 'Live from the cruise line\'s room selection, same as their booking site. Pick the exact pair when you book.' : 'Connecting info was not available; showing per-room prices.' + (g.error ? ' (' + g.error + ')' : '') }));
       }).catch(function (e) { if (alive()) { clear(out); add(out, errBox(e)); } });
     }
     draw();

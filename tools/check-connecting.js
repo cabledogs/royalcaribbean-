@@ -10,12 +10,19 @@ process.env.WWW_DIR = process.env.WWW_DIR || path.join(__dirname, '..', 'app', '
 const Core = require(path.join(process.env.WWW_DIR, 'core.js'));
 const { upstream } = require(path.join(__dirname, '..', 'server', 'server.js'));
 
-const [pkg, date, ...rooms] = process.argv.slice(2);
+// optional: --cna 123456789 --state FL  (to test with your Crown & Anchor number / residency)
+const argv = process.argv.slice(2), disc = {};
+for (let i = argv.length - 2; i >= 0; i--) {
+  if (argv[i] === '--cna') { disc.loyaltyNumber = argv[i + 1]; argv.splice(i, 2); }
+  else if (argv[i] === '--state') { disc.state = argv[i + 1].toUpperCase(); argv.splice(i, 2); }
+}
+const [pkg, date, ...rooms] = argv;
 if (!pkg || !date || !rooms.length) { console.log('Usage: node tools/check-connecting.js IC06W318 20270905 2+1 2+1'); process.exit(1); }
 const roomList = rooms.map(r => { const [a, c] = r.split('+').map(Number); return { adults: a, children: c || 0 }; });
 (async () => {
   try {
-    const ro = await Core.getRoomOptions(upstream, { packageCode: pkg, sailDate: date, currency: 'USD', host: 'www.royalcaribbean.com', rooms: roomList, keepRaw: true });
+    const ro = await Core.getRoomOptions(upstream, { packageCode: pkg, sailDate: date, currency: 'USD', host: 'www.royalcaribbean.com', rooms: roomList, keepRaw: true, ...disc });
+    if (disc.loyaltyNumber || disc.state) console.log('Discounts ' + (ro.discounted ? 'ACCEPTED by Royal' : 'REJECTED by Royal - asked again without them'));
     // where in Royal's reply are categories, connecting flags and cabin pairs?
     const where = {};
     (function walk(o, p) {
@@ -39,7 +46,7 @@ const roomList = rooms.map(r => { const [a, c] = r.split('+').map(Number); retur
       const key = roomList[i].adults + '/' + roomList[i].children;
       if (byOcc[key]) continue;
       const order = [roomList[i]].concat(roomList.filter((x, k) => k !== i));
-      byOcc[key] = await Core.getRoomOptions(upstream, { packageCode: pkg, sailDate: date, currency: 'USD', host: 'www.royalcaribbean.com', rooms: order });
+      byOcc[key] = await Core.getRoomOptions(upstream, { packageCode: pkg, sailDate: date, currency: 'USD', host: 'www.royalcaribbean.com', rooms: order, ...disc });
     }
     console.log('\nCheapest per cabin type, all rooms same type:');
     Core.combineSplit(roomList, ro, byOcc, false).forEach(b => console.log('  ' + b.kind.padEnd(9) + b.code.padEnd(4) + ' $' + b.total + '  ' + b.name + (b.connecting ? '  (connecting)' : '')));
