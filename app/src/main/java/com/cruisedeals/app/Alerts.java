@@ -124,7 +124,9 @@ final class Alerts {
     private static String checkOne(JSONObject a, String now) throws Exception {
         double current;
         try {
-            if ("cabin".equals(a.optString("type"))) {
+            if ("cruise".equals(a.optString("type"))) {
+                current = CruiseAlert.price(a);
+            } else if ("cabin".equals(a.optString("type"))) {
                 current = Double.NaN;
                 JSONArray cabins = Cruise.cabins(a);
                 for (int k = 0; k < cabins.length(); k++) {
