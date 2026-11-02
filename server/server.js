@@ -254,7 +254,8 @@ function smsReady() {
 
 function smsFormatOpts() {
   const c = smsConf();
-  return { link: c.includeLink && c.link ? c.link : '' };
+  const tbNoLinks = c.provider === 'textbelt' && ((c.settings.textbelt || {}).allowLinks !== 'yes');
+  return { link: c.includeLink && c.link && !tbNoLinks ? c.link : '' };
 }
 
 async function sendSms(phone, message) {
@@ -284,7 +285,7 @@ async function checkUserAlerts(name, httpFn) {
       const r = await Core.checkAlert(httpFn, a);
       results.push(r.alert);
       if (r.message) messages.push(r.message);
-      if (r.drop) drops.push(r.drop);
+      if (r.drop) drops.push(Object.assign({ alertId: r.alert.id }, r.drop));
     } catch (e) { results.push(a); }
   }
   // merge: keep edits made while we were checking
@@ -297,11 +298,82 @@ async function checkUserAlerts(name, httpFn) {
   return { messages, drops };
 }
 
+function validTz(tz) {
+  if (typeof tz !== 'string' || !tz || tz.length > 64) return false;
+  try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); return true; } catch (e) { return false; }
+}
+
+/* the user's local date and hour (their browser's time zone, else the server's) */
+function localNow(rec, now) {
+  const tz = rec.settings && validTz(rec.settings.tz) ? rec.settings.tz : undefined;
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
+    .formatToParts(now || new Date());
+  const get = t => (parts.find(p => p.type === t) || {}).value;
+  return { date: get('year') + '-' + get('month') + '-' + get('day'), hour: parseInt(get('hour'), 10) };
+}
+
+async function textUser(name, drops) {
+  const rec = db.users[name];
+  const text = SMS.formatDrops(drops, smsFormatOpts());
+  await sendSms(rec.settings.phone, text);
+  log('sms sent to', name, '(' + drops.length + ' drop' + (drops.length === 1 ? '' : 's') + ')');
+}
+
+/*
+ * New drops are queued per user, one entry per alert (the newest price wins, the "was" price stays).
+ * "each": texted right after the check. "daily" (default): one text a day at the user's chosen hour.
+ */
 async function notifyUser(name, drops) {
   const rec = db.users[name];
-  if (!drops.length || !rec || !rec.settings || !rec.settings.smsEnabled || !rec.settings.phone) return;
-  const text = SMS.formatDrops(drops, smsFormatOpts());
-  try { await sendSms(rec.settings.phone, text); log('sms sent to', name); } catch (e) { log('sms failed for', name, e.message); }
+  if (!rec || !rec.settings || !rec.settings.smsEnabled || !rec.settings.phone) return;
+  if (drops.length) {
+    const pending = rec.pendingDrops || [];
+    for (const d of drops) {
+      const i = pending.findIndex(x => x.alertId === d.alertId);
+      if (i < 0) pending.push(d);
+      else pending[i] = Object.assign({}, d, { previous: pending[i].previous !== null && pending[i].previous !== undefined ? pending[i].previous : d.previous });
+    }
+    rec.pendingDrops = pending.slice(-100);
+    await saveDb();
+  }
+  if (rec.settings.smsMode === 'each') await flushTexts(name);
+}
+
+async function flushTexts(name) {
+  const rec = db.users[name];
+  if (!rec || !rec.pendingDrops || !rec.pendingDrops.length) return false;
+  if (!rec.settings || !rec.settings.smsEnabled || !rec.settings.phone) { rec.pendingDrops = []; await saveDb(); return false; }
+  // skip alerts deleted since
+  const ids = new Set((rec.alerts || []).map(a => a.id));
+  const drops = rec.pendingDrops.filter(d => !d.alertId || ids.has(d.alertId));
+  if (!drops.length) { rec.pendingDrops = []; await saveDb(); return false; }
+  try {
+    await textUser(name, drops);
+    rec.pendingDrops = [];
+    await saveDb();
+    return true;
+  } catch (e) { log('sms failed for', name, e.message); return false; }
+}
+
+/* runs every few minutes: sends each "daily" user's queued drops once a day at their hour */
+let digesting = false;
+async function digestTick(now) {
+  if (digesting) return;
+  digesting = true;
+  try {
+    for (const name of Object.keys(db.users)) {
+      const rec = db.users[name];
+      if (!rec.pendingDrops || !rec.pendingDrops.length || !rec.settings || rec.settings.smsMode === 'each') continue;
+      const t = localNow(rec, now);
+      const hour = Number.isInteger(rec.settings.smsHour) ? rec.settings.smsHour : 9;
+      if (t.hour < hour || rec.lastDigest === t.date) continue;
+      // a failed send is retried at most once an hour
+      if (rec.lastDigestTry && Date.now() - rec.lastDigestTry < 3600e3) continue;
+      rec.lastDigestTry = Date.now();
+      if (await flushTexts(name)) { rec.lastDigest = t.date; rec.lastDigestTry = 0; await saveDb(); }
+    }
+  } catch (e) { log('digest error', e.message); }
+  finally { digesting = false; }
 }
 
 let checking = false;
@@ -369,11 +441,14 @@ function publicUser(name, rec) {
   return {
     username: name, admin: !!rec.admin, smsConfigured: smsReady(),
     smsProvider: smsReady() ? SMS.PROVIDERS[smsConf().provider].label : '',
-    settings: { phone: (rec.settings && rec.settings.phone) || '', smsEnabled: !!(rec.settings && rec.settings.smsEnabled) }
+    settings: { phone: (rec.settings && rec.settings.phone) || '', smsEnabled: !!(rec.settings && rec.settings.smsEnabled),
+      smsMode: rec.settings && rec.settings.smsMode === 'each' ? 'each' : 'daily',
+      smsHour: rec.settings && Number.isInteger(rec.settings.smsHour) ? rec.settings.smsHour : 9 },
+    pendingTexts: (rec.pendingDrops || []).length
   };
 }
 
-function cleanAlerts(list) {
+function cleanAlerts(list, old) {
   if (!Array.isArray(list)) throw Object.assign(new Error('Alerts must be a list'), { status: 400 });
   if (list.length > CFG.maxAlertsPerUser) throw Object.assign(new Error('Too many alerts (max ' + CFG.maxAlertsPerUser + ')'), { status: 400 });
   return list.filter(a => a && typeof a === 'object' && typeof a.id === 'string' && (a.type === 'product' || a.type === 'cabin')).map(a => {
@@ -386,6 +461,16 @@ function cleanAlerts(list) {
     if (out.host && !['www.royalcaribbean.com', 'www.celebritycruises.com'].includes(out.host)) out.host = 'www.royalcaribbean.com';
     if (out.loyaltyNumber !== undefined && !/^\d{4,15}$/.test(String(out.loyaltyNumber))) delete out.loyaltyNumber;
     if (out.state !== undefined && !/^[A-Z]{2}$/.test(String(out.state))) delete out.state;
+    // a target has to be below today's price (an unchanged older target is left alone)
+    if (out.target !== undefined && out.target !== null && out.target !== '') {
+      const t = Number(out.target);
+      const nowPrice = typeof out.lastPrice === 'number' ? out.lastPrice : Number(out.initialPrice);
+      const before = (old || []).find(x => x.id === out.id);
+      if (!(t > 0)) out.target = null;
+      else if (isFinite(nowPrice) && t >= nowPrice && !(before && Number(before.target) === t)) {
+        throw Object.assign(new Error('Your target for "' + String(out.title || 'this item').slice(0, 60) + '" has to be below today\'s price'), { status: 400 });
+      }
+    }
     return out;
   });
 }
@@ -427,7 +512,12 @@ async function api(req, res, url) {
     const b = (await readJson(req, 4096)) || {};
     const phone = normalizePhone(b.phone);
     if (phone === null) return send(res, 400, { error: 'That phone number does not look right. Use digits, e.g. +15551234567' });
-    me.rec.settings = { phone, smsEnabled: !!b.smsEnabled && !!phone };
+    me.rec.settings = {
+      phone, smsEnabled: !!b.smsEnabled && !!phone,
+      smsMode: b.smsMode === 'each' ? 'each' : 'daily',
+      smsHour: Number.isInteger(b.smsHour) && b.smsHour >= 0 && b.smsHour <= 23 ? b.smsHour : 9,
+      tz: validTz(b.tz) ? b.tz : ''
+    };
     await saveDb();
     return send(res, 200, publicUser(me.name, me.rec));
   }
@@ -456,7 +546,7 @@ async function api(req, res, url) {
   }
   if (p === '/api/alerts' && method === 'GET') return send(res, 200, me.rec.alerts || []);
   if (p === '/api/alerts' && method === 'PUT') {
-    me.rec.alerts = cleanAlerts(await readJson(req, 512 * 1024));
+    me.rec.alerts = cleanAlerts(await readJson(req, 512 * 1024), me.rec.alerts);
     await saveDb();
     return send(res, 200, me.rec.alerts);
   }
@@ -537,6 +627,7 @@ async function api(req, res, url) {
           if (typeof v !== 'string') continue;
           v = v.trim().slice(0, 500);
           if (f.secret && (v === '' || v.startsWith('********'))) continue; // keep the stored secret
+          if (f.type === 'checkbox') v = v === 'yes' ? 'yes' : '';
           if (/url/i.test(f.key) && v && !/^https?:\/\/[^\s]+$/i.test(v)) return send(res, 400, { error: f.label + ' must be a http(s) URL' });
           cur[f.key] = v;
         }
@@ -633,6 +724,7 @@ if (require.main === module) {
   pruneSessions();
   setInterval(pruneSessions, 3600e3).unref();
   setInterval(scheduledCheck, CFG.checkHours * 3600e3);
+  setInterval(() => digestTick(), parseInt(env.DIGEST_EVERY_MS || '', 10) || 5 * 60e3).unref();
   setTimeout(scheduledCheck, 60e3).unref();
   server.listen(CFG.port, () => log('Cruise Deals listening on :' + CFG.port + ' (alerts every ' + CFG.checkHours + 'h, texts via ' + (smsReady() ? smsConf().provider : 'nobody yet') + ')'));
   const stop = () => { server.close(); writing.then(() => process.exit(0)); };
@@ -640,4 +732,4 @@ if (require.main === module) {
   process.on('SIGINT', stop);
 }
 
-module.exports = { server, hashPassword, verifyPassword, planCheck: scheduledCheck, upstream };
+module.exports = { server, hashPassword, verifyPassword, planCheck: scheduledCheck, upstream, digestTick };

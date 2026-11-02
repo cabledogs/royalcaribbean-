@@ -11,15 +11,22 @@
 
 const timeout = () => AbortSignal.timeout(20000);
 
+/* Textbelt refuses texts with URLs unless the key is approved for them */
+function stripLinks(text) {
+  return String(text).replace(/\n?\s*https?:\/\/\S+/gi, '').trim();
+}
+
 const PROVIDERS = {
   textbelt: {
     label: 'Textbelt',
-    help: 'Buy a key at textbelt.com. US/Canada numbers. New keys may need Textbelt to approve links before URLs are allowed in texts.',
+    help: 'Buy a key at textbelt.com. US/Canada numbers. Textbelt blocks links in texts until they approve your key, so links are left out unless you tick the box below.',
     fields: [
       { key: 'key', label: 'API key', secret: true, required: true },
-      { key: 'url', label: 'API URL (leave blank for textbelt.com)', placeholder: 'https://textbelt.com/text' }
+      { key: 'url', label: 'API URL (leave blank for textbelt.com)', placeholder: 'https://textbelt.com/text' },
+      { key: 'allowLinks', label: 'Textbelt approved my key for links', type: 'checkbox' }
     ],
     async send(cfg, phone, message) {
+      if (cfg.allowLinks !== 'yes') message = stripLinks(message);
       const body = new URLSearchParams({ phone, message, key: cfg.key });
       const res = await fetch(cfg.url || 'https://textbelt.com/text', { method: 'POST', body, signal: timeout() });
       const j = await res.json().catch(() => ({}));
@@ -146,4 +153,4 @@ function samples(opts) {
 /** segments the carrier will bill: 160 chars (153 when split) for plain text */
 function segments(text) { return text.length <= 160 ? 1 : Math.ceil(text.length / 153); }
 
-module.exports = { PROVIDERS, formatDrops, testMessage, samples, segments };
+module.exports = { stripLinks, PROVIDERS, formatDrops, testMessage, samples, segments };

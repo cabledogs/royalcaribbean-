@@ -1189,21 +1189,35 @@
       var s = me.settings || {};
       var phone = h('input', { type: 'tel', autocomplete: 'tel', placeholder: '+1 555 123 4567', value: s.phone || '' });
       var sms = h('input', { type: 'checkbox', checked: !!s.smsEnabled });
+      var mode = h('select', { 'aria-label': 'When to text me' },
+        h('option', { value: 'daily', text: 'Once a day - all drops in one text', selected: s.smsMode !== 'each' }),
+        h('option', { value: 'each', text: 'Right after each check', selected: s.smsMode === 'each' }));
+      var hour = h('select', { 'aria-label': 'Daily text time' });
+      for (var hh = 0; hh < 24; hh++) {
+        add(hour, h('option', { value: String(hh), text: (hh % 12 || 12) + ':00 ' + (hh < 12 ? 'AM' : 'PM'), selected: (s.smsHour === undefined ? 9 : s.smsHour) === hh }));
+      }
+      var hourRow = h('label', { class: 'field' }, h('span', { text: 'Daily text at' }), hour);
+      function syncMode() { hourRow.hidden = mode.value !== 'daily'; }
+      mode.onchange = syncMode; syncMode();
+      var tz = ''; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { /* server uses its own */ }
+      function values() { return { phone: phone.value.trim(), smsEnabled: sms.checked, smsMode: mode.value, smsHour: parseInt(hour.value, 10), tz: tz }; }
       var msg = h('div');
       add(box, h('div', { class: 'card' },
         h('b', { text: 'Text message alerts' }),
         h('p', { class: 'small muted', text: me.smsConfigured ? 'Sent through ' + me.smsProvider + ' when one of your alerts drops in price.' : 'Text messages are not set up yet' + (me.admin ? ' - choose a provider below.' : ' - ask the admin.') }),
         h('label', { class: 'field' }, h('span', { text: 'Mobile number' }), phone),
         h('label', { class: 'toggle' }, h('span', { text: 'Text me price drops' }), sms),
+        h('label', { class: 'field' }, h('span', { text: 'When to text me' }), mode), hourRow,
+        h('p', { class: 'small muted', text: 'You only get another text for the same item if its price falls below the price we last texted you.' }),
         msg,
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn', text: 'Save', onclick: function () {
             clear(msg);
-            P.saveSettings({ phone: phone.value.trim(), smsEnabled: sms.checked }).then(function () { toast('Saved'); }).catch(function (e) { add(msg, errBox(e)); });
+            P.saveSettings(values()).then(function () { toast('Saved'); }).catch(function (e) { add(msg, errBox(e)); });
           } }),
           h('button', { class: 'btn ghost', text: 'Send test text', disabled: !me.smsConfigured, onclick: function () {
             clear(msg);
-            P.saveSettings({ phone: phone.value.trim(), smsEnabled: sms.checked }).then(function () { return P.testSms(); })
+            P.saveSettings(values()).then(function () { return P.testSms(); })
               .then(function (r) { toast('Sent! ' + ((r && r.info) || '')); })
               .catch(function (e) { add(msg, errBox(e)); });
           } })),
@@ -1263,6 +1277,12 @@
         add(fieldsBox, h('p', { class: 'small muted', text: p.help }));
         p.fields.forEach(function (f) {
           var cur = (c.values[p.id] || {})[f.key] || '';
+          if (f.type === 'checkbox') {
+            var cb = h('input', { type: 'checkbox', checked: cur === 'yes' });
+            inputs[f.key] = { get value() { return cb.checked ? 'yes' : ''; } };
+            add(fieldsBox, h('label', { class: 'toggle small' }, h('span', { text: f.label }), cb));
+            return;
+          }
           var inp = h('input', { type: f.secret ? 'password' : 'text', autocomplete: 'off', placeholder: f.secret && cur ? 'saved (' + cur.slice(-4) + ') - type to replace' : (f.placeholder || ''), value: f.secret ? '' : cur });
           inputs[f.key] = inp;
           add(fieldsBox, h('label', { class: 'field' }, h('span', { text: f.label + (f.required ? '' : '') }), inp));

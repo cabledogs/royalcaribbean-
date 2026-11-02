@@ -1,6 +1,8 @@
 // Fake cruise-line upstream for server tests (MOCK_UPSTREAM=test/mock-upstream.js).
 let price = 129;
 module.exports = async function (method, url, o) {
+  // the test process can change the excursion price through a file
+  if (process.env.MOCK_PRICE_FILE) { try { price = Number(require('fs').readFileSync(process.env.MOCK_PRICE_FILE, 'utf8')) || price; } catch (e) { /* default */ } }
   const json = x => ({ status: 200, body: JSON.stringify(x) });
   if (url.includes('/web/v2/ships')) return json({ payload: { ships: [{ shipCode: 'WN', name: 'WONDER OF THE SEAS' }] } });
   if (/voyages$/.test(url)) return json({ payload: { voyages: [{ sailDate: '20270110', voyageDescription: '7 Night Western Caribbean', duration: 7, voyageCode: 'W123' }] } });

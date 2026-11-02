@@ -39,7 +39,8 @@ async function call(method, p, body, who = 'a', extra = {}) {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), 'cd-'));
   const srv = spawn(process.execPath, [path.join(__dirname, '../server/server.js')], {
     env: Object.assign({}, process.env, { PORT, DATA_DIR: data, ADMIN_USER: 'captain', ADMIN_PASSWORD: 'correct-horse-1',
-      TEXTBELT_KEY: 'test-key-abcd', TWILIO_API_BASE: 'http://127.0.0.1:' + TB_PORT, MOCK_UPSTREAM: path.join(__dirname, 'mock-upstream.js') }),
+      TEXTBELT_KEY: 'test-key-abcd', TWILIO_API_BASE: 'http://127.0.0.1:' + TB_PORT, MOCK_UPSTREAM: path.join(__dirname, 'mock-upstream.js'),
+      MOCK_PRICE_FILE: path.join(data, 'mock-price'), DIGEST_EVERY_MS: '300' }),
     stdio: ['ignore', 'pipe', 'inherit'] });
   let out = ''; srv.stdout.on('data', d => out += d);
   for (let i = 0; i < 50 && !out.includes('listening'); i++) await new Promise(r => setTimeout(r, 100));
@@ -91,13 +92,46 @@ async function call(method, p, body, who = 'a', extra = {}) {
     assert((await call('PUT', '/api/alerts', [alert], 'b')).json[0].evil === undefined, 'alerts saved and sanitised');
     assert((await call('GET', '/api/alerts')).json.length === 0, 'alerts are per user');
     assert((await call('PUT', '/api/me/settings', { phone: 'abc', smsEnabled: true }, 'b')).status === 400, 'bad phone refused');
-    assert((await call('PUT', '/api/me/settings', { phone: '+1 (555) 123-4567', smsEnabled: true }, 'b')).json.settings.phone === '+15551234567', 'phone saved');
+    assert((await call('PUT', '/api/me/settings', { phone: '+1 (555) 123-4567', smsEnabled: true, smsMode: 'each' }, 'b')).json.settings.phone === '+15551234567', 'phone saved');
     const chk = await call('POST', '/api/alerts/check', undefined, 'b');
     assert(chk.json[0].status === 'dropped' && chk.json[0].lastPrice === 129, 'price drop detected');
     assert(texts.length === 1 && texts[0].phone === '+15551234567' && texts[0].key === 'test-key-abcd', 'Textbelt SMS sent with stored key');
     assert(texts[0].message === 'Cruise Deals: price drop!\nMayan Ruins Tour\nNow $129 (was $150, save $21)\nWonder of the Seas, Jan 10, 2027', 'text format: ' + JSON.stringify(texts[0].message));
     await call('POST', '/api/alerts/check', undefined, 'b');
     assert(texts.length === 1, 'no duplicate SMS for the same price');
+    // price goes back up, then down to the same price: no new text; lower than the last text: text
+    fs.writeFileSync(path.join(data, 'mock-price'), '140'); await call('POST', '/api/alerts/check', undefined, 'b');
+    fs.writeFileSync(path.join(data, 'mock-price'), '129'); await call('POST', '/api/alerts/check', undefined, 'b');
+    assert(texts.length === 1, 'no new text when the price comes back to the already-texted price');
+    fs.writeFileSync(path.join(data, 'mock-price'), '120'); await call('POST', '/api/alerts/check', undefined, 'b');
+    assert(texts.length === 2 && /Now \$120/.test(texts[1].message), 'texted again only below the last texted price');
+    texts.length = 1;
+
+    // targets must be below today's price
+    const tgt = await call('PUT', '/api/alerts', [Object.assign({}, alert, { lastPrice: 120, target: 125 })], 'b');
+    assert(tgt.status === 400 && /below today/.test(tgt.json.error), 'target above the current price refused');
+    assert((await call('PUT', '/api/alerts', [Object.assign({}, alert, { lastPrice: 120, notifiedPrice: 120, status: 'dropped', target: 110 })], 'b')).status === 200, 'target below the current price accepted');
+
+    // daily digest: drops wait for the user's hour and go out together in one text
+    const bev = d => ({ id: 'product|WN|20270110|pt_beverage|' + d + '|3005|USD', type: 'product', title: 'Deluxe Beverage Package', ship: 'WN', shipName: 'Wonder of the Seas',
+      sailDate: '20270110', category: 'pt_beverage', day: d, productId: '3005', currency: 'USD', unit: 'Per Day', initialPrice: 99, target: null });
+    const now = (await call('GET', '/api/alerts', undefined, 'b')).json;
+    await call('PUT', '/api/alerts', now.concat([bev(1), bev(2)]), 'b');
+    // pick a time zone where it is not late evening, so "2 hours from now" is still today
+    const utcH = new Date().getUTCHours(), tz = utcH <= 21 ? 'UTC' : 'Etc/GMT+12', hourNow = utcH <= 21 ? utcH : utcH - 12, later = hourNow + 2;
+    await call('PUT', '/api/me/settings', { phone: '+15551234567', smsEnabled: true, smsMode: 'daily', smsHour: later, tz }, 'b');
+    await call('POST', '/api/alerts/check', undefined, 'b');
+    await new Promise(r => setTimeout(r, 900));
+    assert(texts.length === 1 && (await call('GET', '/api/me', undefined, 'b')).json.pendingTexts === 2, 'daily mode: drops queued until the chosen hour');
+    await call('PUT', '/api/me/settings', { phone: '+15551234567', smsEnabled: true, smsMode: 'daily', smsHour: hourNow, tz }, 'b');
+    await new Promise(r => setTimeout(r, 900));
+    assert(texts.length === 2 && /^Cruise Deals: 2 price drops/.test(texts[1].message), 'one combined text at the chosen hour: ' + JSON.stringify(texts[1] && texts[1].message));
+    fs.writeFileSync(path.join(data, 'mock-price'), '100'); await call('POST', '/api/alerts/check', undefined, 'b');
+    await new Promise(r => setTimeout(r, 900));
+    assert(texts.length === 2 && (await call('GET', '/api/me', undefined, 'b')).json.pendingTexts === 1, 'second drop the same day waits for tomorrow');
+    texts.length = 1;
+    await call('PUT', '/api/me/settings', { phone: '+15551234567', smsEnabled: true, smsMode: 'each' }, 'b');
+
     assert((await call('POST', '/api/me/test-sms', undefined, 'b')).json.quotaRemaining === 41, 'test SMS works');
 
     // switch providers from the admin page, no restart
@@ -107,8 +141,14 @@ async function call(method, p, body, who = 'a', extra = {}) {
     await call('PUT', '/api/admin/sms', { provider: 'twilio', values: { twilio: { accountSid: 'AC123', authToken: 'tok', from: '+15559998888' } } });
     assert((await call('POST', '/api/admin/sms/test', { phone: '+15550002222' })).json.info === 'Sent (Twilio id SM1)', 'twilio test send');
     assert(twilio[0].form.To === '+15550002222' && twilio[0].form.From === '+15559998888' && twilio[0].auth === 'Basic ' + Buffer.from('AC123:tok').toString('base64'), 'twilio request correct');
-    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} } });
+    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} }, link: 'https://cruise.example.com', includeLink: true });
     assert((await call('GET', '/api/me', undefined, 'b')).json.smsProvider === 'Textbelt', 'back to Textbelt; users see the provider name');
+    const n0 = texts.length;
+    await call('POST', '/api/admin/sms/test', { phone: '+15550003333' });
+    assert(texts.length === n0 + 1 && !/https?:/.test(texts[n0].message), 'Textbelt texts leave the link out (Textbelt blocks links)');
+    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: { allowLinks: 'yes' } }, link: 'https://cruise.example.com', includeLink: true });
+    await call('POST', '/api/admin/sms/test', { phone: '+15550003333' });
+    assert(texts[n0 + 1].message.endsWith('\nhttps://cruise.example.com/'), 'link included once the admin says Textbelt approved links');
 
     let blocked = false;
     for (let i = 0; i < 12; i++) if ((await call('POST', '/api/login', { username: 'firstmate', password: 'guess' + i }, 'x')).status === 429) blocked = true;
