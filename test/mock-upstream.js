@@ -17,6 +17,7 @@ module.exports = async function (method, url, o) {
   if (url.includes('/room-selection/api/v1/rooms')) {
     const b = JSON.parse(o.body);
     if (o.headers.brand !== 'R' || o.headers.country !== 'USA') return { status: 403, body: 'missing brand/country headers' };
+    if (!b.rooms.every(r => r.stateroomSubtypeCode)) return { status: 400, body: '{"error":"stateroomSubtypeCode is required"}' };
     const room = r => ({ request: r, options: { stateroomTypes: [{ name: 'Interior', summary: 'x', connecting: true, categories: [
       { categoryCode: 'T5', image: { alt: 'Surfside Family Interior' }, connecting: b.rooms.length > 1, stateroomsAvailable: 5, pricing: { invoice: { total: 1411.69 } },
         cabins: [{ cabinNumber: '8341', connectingCabin: { cabinNumber: '8343' } }] }] }] } });
@@ -25,7 +26,7 @@ module.exports = async function (method, url, o) {
   if (url.includes('/room-selection/')) {
     if (url.includes('r0l=987654321') && url.includes('r0k=FL')) return { status: 200, body: '{"rooms":[{"options":{"stateroomTypes":[{"name":"Interior","stateroomSubtypes":[{"name":"Interior","pricing":{"invoice":{"total":1299}}}]}]}}]}' };
     const conn = { name: 'Interior Connecting', roomsLeft: 4, pricing: { invoice: { total: 1650 } } };
-    return { status: 200, body: '0:["$","x",{"rooms":[{"options":{"stateroomTypes":[{"name":"Interior","stateroomSubtypes":[{"name":"Interior","pricing":{"invoice":{"total":1499.5}}},' + JSON.stringify(conn) + ']},{"name":"Balcony","stateroomSubtypes":[{"name":"Balcony","roomsLeft":0,"pricing":{"invoice":{"total":2000}}},{"name":"Balcony Plus","pricing":{"invoice":{"total":2399}}}]}]}}]}]' };
+    return { status: 200, body: '0:["$","x",{"rooms":[{"options":{"stateroomTypes":[{"name":"Interior","stateroomSubtypes":[{"code":"T5","name":"Interior","pricing":{"invoice":{"total":1499.5}}},' + JSON.stringify(conn) + ']},{"name":"Balcony","stateroomSubtypes":[{"name":"Balcony","roomsLeft":0,"pricing":{"invoice":{"total":2000}}},{"name":"Balcony Plus","pricing":{"invoice":{"total":2399}}}]}]}}]}]' };
   }
   return { status: 404, body: '' };
 };
