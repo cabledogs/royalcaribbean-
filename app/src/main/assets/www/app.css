@@ -44,6 +44,9 @@ button { cursor: pointer; }
 #title { font-size: 19px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #subtitle { font-size: 13px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #subtitle:empty { display: none; }
+.acct-btn { flex: none; display: flex; align-items: center; gap: 6px; background: rgba(255, 255, 255, .14); color: #fff; border: 0; border-radius: 999px; padding: 5px 12px 5px 5px; min-height: 40px; font: inherit; font-size: 14px; font-weight: 600; }
+.acct-btn:active { background: rgba(255, 255, 255, .25); }
+.acct-dot { width: 30px; height: 30px; border-radius: 50%; background: #fff; color: var(--navy); display: grid; place-items: center; font-weight: 800; }
 .icon-btn { background: none; border: 0; color: inherit; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; }
 .icon-btn:active { background: rgba(255, 255, 255, .15); }
 

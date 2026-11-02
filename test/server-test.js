@@ -182,6 +182,16 @@ async function call(method, p, body, who = 'a', extra = {}) {
     await pg.waitForTimeout(300);
     await pg.locator('#sheet').screenshot({ path: path.join(__dirname, 'shots', 'web-4-text-preview.png') });
     await pg.screenshot({ path: path.join(__dirname, 'shots', 'web-2-settings.png'), fullPage: true });
+    // sign out from the top bar on any page
+    await pg.keyboard.press('Escape').catch(() => {});
+    await pg.goto(BASE + '/');
+    await pg.click('[data-root=alerts]');
+    await pg.click('#acct');
+    await pg.waitForSelector('text=Signed in as captain (admin)');
+    await pg.screenshot({ path: path.join(__dirname, 'shots', 'web-5-signout.png') });
+    await pg.click('#sheet >> button.danger');
+    await pg.waitForSelector('text=Welcome aboard');
+    assert(await pg.locator('#acct').isHidden(), 'signed out from the top-bar account button');
     await browser.close();
     assert(!errs.length, 'no browser JS errors ' + errs.join(';'));
     console.log('SERVER TESTS PASSED');

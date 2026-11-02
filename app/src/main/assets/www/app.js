@@ -1373,6 +1373,7 @@
   /* ================= web login screen ================= */
   function showLogin() {
     $('tabs').hidden = true; $('back').hidden = true;
+    if ($('acct')) $('acct').hidden = true;
     setTitle('Cruise Deals', 'Sign in');
     var v = clear($('view'));
     var u = h('input', { autocomplete: 'username', autocapitalize: 'none' }), pw = h('input', { type: 'password', autocomplete: 'current-password' });
@@ -1388,8 +1389,33 @@
     u.focus();
   }
 
-  function start() {
+  /* web: account button in the top bar on every page (who is signed in + Sign out) */
+  function accountButton(me) {
+    var btn = $('acct');
+    if (!btn) {
+      btn = h('button', { id: 'acct', class: 'acct-btn', 'aria-label': 'Account and sign out' });
+      $('top').appendChild(btn);
+    }
+    btn.hidden = false;
+    var name = (me && me.username) || '';
+    clear(btn); add(btn, [h('span', { class: 'acct-dot', text: (name[0] || '?').toUpperCase() }), h('span', { class: 'acct-out', text: 'Sign out' })]);
+    btn.onclick = function () {
+      openSheet([
+        h('h3', { text: 'Signed in as ' + name + (me && me.admin ? ' (admin)' : '') }),
+        h('p', { class: 'small muted', text: 'Signing out ends this session on this device. Your alerts stay saved on the server.' }),
+        h('div', { class: 'btn-row' },
+          h('button', { class: 'btn ghost', text: 'Cancel', onclick: closeSheet }),
+          h('button', { class: 'btn danger', text: 'Sign out', onclick: function () { closeSheet(); P.logout().then(showLogin, showLogin); } }))
+      ]);
+    };
+  }
+
+  function start(me) {
     $('tabs').hidden = false;
+    if (P.kind === 'web') {
+      if (me && me.username) accountButton(me);
+      else P.me().then(accountButton).catch(function () { /* stays hidden */ });
+    }
     loadAlerts().then(updateBadge);
     setRoot('explore');
   }
