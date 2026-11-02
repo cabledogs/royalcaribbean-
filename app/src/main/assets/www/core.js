@@ -636,7 +636,7 @@
         (previous !== null && previous !== undefined && previous !== current ? ' (was ' + fmtMoney(previous, a.currency) + ')' : '') +
         ' - ' + (a.shipName || a.ship || '') + ' ' + fmtSailDate(a.sailDate);
     }
-    if (!hit) a.notifiedPrice = null; // re-arm once it goes back up
+    // no re-arm: after the first alert, only a price below the last alerted price alerts again
     return { alert: a, message: message, drop: drop };
   }
 

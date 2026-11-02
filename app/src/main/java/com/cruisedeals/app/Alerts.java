@@ -84,10 +84,12 @@ final class Alerts {
                     drops++;
                     if (msgs.length() > 0) msgs.append('\n');
                     msgs.append(msg);
-                    notify(c, 1000 + Math.abs(a.optString("id").hashCode() % 100000), "Price drop: " + a.optString("title"), msg);
                 }
             } catch (Exception ignored) { /* keep checking the rest */ }
         }
+        // one notification for the whole check, not one per alert
+        if (drops == 1) notify(c, 1000, "Price drop", msgs.toString());
+        else if (drops > 1) notify(c, 1000, drops + " price drops", msgs.toString());
         // merge back: keep alerts the user added/removed while we were checking
         synchronized (LOCK) {
             try {
@@ -153,10 +155,8 @@ final class Alerts {
         double threshold = hasTarget ? target : a.optDouble("initialPrice", Double.NaN);
         boolean hit = hasTarget ? current <= threshold : current < threshold;
         a.put("status", hit ? "dropped" : "watching");
-        if (!hit) {
-            a.put("notifiedPrice", JSONObject.NULL);
-            return null;
-        }
+        if (!hit) return null;
+        // after the first alert, only alert again when it drops below the price we last told you about
         double notified = a.optDouble("notifiedPrice", Double.NaN);
         if (!Double.isNaN(notified) && current >= notified) return null;
         a.put("notifiedPrice", current);
