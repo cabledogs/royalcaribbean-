@@ -10,6 +10,15 @@ const PORT = 18080, TB_PORT = 18081, BASE = 'http://127.0.0.1:' + PORT;
 const texts = [];
 const assert = (c, m) => { if (!c) throw new Error('FAIL: ' + m); console.log('ok -', m); };
 
+// every local module server.js requires must be copied into the Docker image
+{
+  const docker = fs.readFileSync(path.join(__dirname, '../Dockerfile'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '../server/server.js'), 'utf8');
+  const mods = [...src.matchAll(/require\('\.\/([\w-]+)'\)/g)].map(m => m[1] + '.js');
+  const copied = f => docker.includes('server/*.js') || docker.includes('server/' + f);
+  assert(mods.length && mods.every(copied), 'Dockerfile copies every server module (' + mods.join(', ') + ')');
+}
+
 const hooks = [], twilio = [];
 const tb = http.createServer((req, res) => {
   let b = ''; req.on('data', d => b += d); req.on('end', () => {

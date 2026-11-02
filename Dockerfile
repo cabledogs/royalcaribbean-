@@ -1,7 +1,7 @@
 FROM node:22-alpine
 ENV NODE_ENV=production PORT=8080 DATA_DIR=/data WWW_DIR=/app/www
 WORKDIR /app
-COPY server/server.js server/sms.js /app/
+COPY server/*.js /app/
 COPY app/src/main/assets/www/ /app/www/
 RUN mkdir -p /data && chown node:node /data
 USER node
