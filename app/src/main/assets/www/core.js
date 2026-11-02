@@ -421,6 +421,7 @@
    * The rooms service needs a real starting category (stateroomSubtypeCode) or it answers 400.
    * Take one from the sailing's cabin page: an interior that is for sale, not a guarantee if possible.
    */
+  var BLOCKED_MSG = 'The cruise line\'s website is blocking requests right now (it does this after many searches in a short time). Cabin prices should work again in 15-30 minutes; drinks, dining, Wi-Fi and excursions are not affected.';
   var startMemo = {};
   var TYPE_CODES = { interior: 'INTERIOR', ocean: 'OUTSIDE', balcony: 'BALCONY', suite: 'DELUXE' };
   async function startingCategory(http, o) {
@@ -474,6 +475,7 @@
       r = await post(body);
       discounted = false;
     }
+    if (r && (r.status === 403 || r.status === 429)) throw new Error(BLOCKED_MSG);
     if (!r || r.status !== 200) {
       var why = r && r.body ? String(r.body).replace(/\s+/g, ' ').slice(0, 200) : '';
       throw new Error('Could not get room options (' + (r ? r.status : 'no response') + (why ? ': ' + why : '') + ')');
@@ -584,6 +586,7 @@
 
   async function getCabins(http, o) {
     var r = await http('GET', cabinUrl(o), { headers: CABIN_HEADERS });
+    if (r && (r.status === 403 || r.status === 429)) throw new Error(BLOCKED_MSG);
     if (!r || r.status < 200 || r.status >= 300) throw new Error('Could not retrieve cabin prices (' + (r ? r.status : 'no response') + ')');
     return parseCabins(r.body);
   }
