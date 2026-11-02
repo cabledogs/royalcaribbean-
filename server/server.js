@@ -148,6 +148,7 @@ function clientIp(req) {
 const ALLOWED_HEADERS = new Set(['user-agent', 'accept', 'accept-language', 'appkey', 'content-type', 'rsc',
   'access-token', 'vds-id', 'account-id', 'authorization', 'appversion',
   'brand', 'country']); // brand/country: the room-selection rooms service (connecting rooms)
+const BOOT_STAMP = Date.now().toString(36);
 const MAX_UPSTREAM_BYTES = 12 * 1024 * 1024;
 
 function allowedUrl(u) {
@@ -587,11 +588,13 @@ async function serveStatic(req, res, url) {
     if (entry[0] === 'index.html') {
       buf = Buffer.from(buf.toString('utf8')
         .replace('<html lang="en">', '<html lang="en" data-server="1">')
+        // new file names after every update so phones never keep running old app code
+        .replace(/(src|href)="(core\.js|platform\.js|app\.js|app\.css)"/g, '$1="$2?v=' + BOOT_STAMP + '"')
         .replace('</title>', '</title>\n  <link rel="manifest" href="manifest.webmanifest">\n  <link rel="icon" href="icon.png">\n  <link rel="apple-touch-icon" href="icon.png">\n  <meta name="apple-mobile-web-app-capable" content="yes">'));
     }
     staticCache[entry[0]] = buf;
   }
-  res.writeHead(200, { 'Content-Type': entry[1], 'Cache-Control': entry[0] === 'index.html' ? 'no-cache' : 'public, max-age=300' });
+  res.writeHead(200, { 'Content-Type': entry[1], 'Cache-Control': 'no-cache' });
   res.end(req.method === 'HEAD' ? undefined : buf);
 }
 
