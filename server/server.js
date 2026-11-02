@@ -146,7 +146,8 @@ function clientIp(req) {
 
 /* ---------------- upstream (cruise line) HTTP ---------------- */
 const ALLOWED_HEADERS = new Set(['user-agent', 'accept', 'accept-language', 'appkey', 'content-type', 'rsc',
-  'access-token', 'vds-id', 'account-id', 'authorization', 'appversion']);
+  'access-token', 'vds-id', 'account-id', 'authorization', 'appversion',
+  'brand', 'country']); // brand/country: the room-selection rooms service (connecting rooms)
 const MAX_UPSTREAM_BYTES = 12 * 1024 * 1024;
 
 function allowedUrl(u) {

@@ -14,6 +14,14 @@ module.exports = async function (method, url, o) {
       : [{ id: '3005', title: 'Deluxe Beverage Package', price: [{ currency: 'USD', formattedPromotionalPrice: '$84.99', salesUnit: { name: 'Per Day' } }] }];
     return json({ data: { products: { commerceProducts: items } } });
   }
+  if (url.includes('/room-selection/api/v1/rooms')) {
+    const b = JSON.parse(o.body);
+    if (o.headers.brand !== 'R' || o.headers.country !== 'USA') return { status: 403, body: 'missing brand/country headers' };
+    const room = r => ({ request: r, options: { stateroomTypes: [{ name: 'Interior', summary: 'x', connecting: true, categories: [
+      { categoryCode: 'T5', image: { alt: 'Surfside Family Interior' }, connecting: b.rooms.length > 1, stateroomsAvailable: 5, pricing: { invoice: { total: 1411.69 } },
+        cabins: [{ cabinNumber: '8341', connectingCabin: { cabinNumber: '8343' } }] }] }] } });
+    return json({ sailing: {}, rooms: b.rooms.map(room) });
+  }
   if (url.includes('/room-selection/')) {
     if (url.includes('r0l=987654321') && url.includes('r0k=FL')) return { status: 200, body: '{"rooms":[{"options":{"stateroomTypes":[{"name":"Interior","stateroomSubtypes":[{"name":"Interior","pricing":{"invoice":{"total":1299}}}]}]}}]}' };
     const conn = { name: 'Interior Connecting', roomsLeft: 4, pricing: { invoice: { total: 1650 } } };
