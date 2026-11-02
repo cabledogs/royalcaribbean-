@@ -202,6 +202,33 @@ function upstreamOnce(method, url, headers, body, hops) {
 }
 
 /* same retry policy as the Python scripts: retry network errors and 5xx, not 4xx */
+/*
+ * The cruise lines' booking WEBSITES (not their APIs) have bot protection that answers 403 to
+ * bursts. Requests to them go out a couple at a time with a gap, identical GETs are reused for
+ * 10 minutes, and after a 403 the host gets a few minutes' rest instead of more requests.
+ */
+const SITE_HOSTS = new Set(['www.royalcaribbean.com', 'www.celebritycruises.com'].concat(env.SITE_HOSTS ? env.SITE_HOSTS.split(',') : []));
+const SITE_GAP_MS = parseInt(env.SITE_GAP_MS || '700', 10);
+const SITE_COOLDOWN_MS = parseInt(env.SITE_COOLDOWN_MS || String(3 * 60e3), 10);
+const siteState = new Map(); // host -> {active, queue, nextAt, coolUntil}
+const siteCache = new Map(); // key -> {t, res}
+
+function siteGate(host) {
+  let st = siteState.get(host);
+  if (!st) siteState.set(host, st = { active: 0, queue: [], nextAt: 0, coolUntil: 0 });
+  return new Promise(resolve => { st.queue.push(resolve); pump(st); });
+}
+function pump(st) {
+  if (st.active >= 2 || !st.queue.length) return;
+  const wait = Math.max(0, st.nextAt - Date.now());
+  if (wait) { if (!st.timer) st.timer = setTimeout(() => { st.timer = null; pump(st); }, wait); return; }
+  st.active++;
+  st.nextAt = Date.now() + SITE_GAP_MS;
+  const go = st.queue.shift();
+  go(() => { st.active--; pump(st); });
+  pump(st);
+}
+
 async function upstream(method, url, opts) {
   opts = opts || {};
   if (!allowedUrl(url)) return { status: 0, body: 'blocked host' };
@@ -210,6 +237,30 @@ async function upstream(method, url, opts) {
   for (const [k, v] of Object.entries(opts.headers || {})) {
     if (ALLOWED_HEADERS.has(k.toLowerCase()) && typeof v === 'string' && !/[\r\n]/.test(v)) headers[k] = v;
   }
+  const host = new URL(url).hostname;
+  if (!SITE_HOSTS.has(host)) return upstreamRetry(method, url, headers, opts);
+  const key = method === 'GET' ? url + ' ' + JSON.stringify(headers) : '';
+  const hit = key && siteCache.get(key);
+  if (hit && Date.now() - hit.t < 10 * 60e3) return hit.res;
+  const st = siteState.get(host);
+  if (st && st.coolUntil > Date.now()) return { status: 429, body: 'The cruise line is limiting requests from this server - try again in a few minutes' };
+  const done = await siteGate(host);
+  try {
+    const st2 = siteState.get(host);
+    if (st2.coolUntil > Date.now()) return { status: 429, body: 'The cruise line is limiting requests from this server - try again in a few minutes' };
+    const res = await upstreamRetry(method, url, headers, opts);
+    if (res.status === 403 || res.status === 429) {
+      if (st2.coolUntil < Date.now()) log('cruise line is blocking requests from this server; pausing', host, 'for', Math.round(SITE_COOLDOWN_MS / 60e3), 'min');
+      st2.coolUntil = Date.now() + SITE_COOLDOWN_MS;
+    } else if (key && res.status === 200) {
+      siteCache.set(key, { t: Date.now(), res });
+      if (siteCache.size > 300) siteCache.delete(siteCache.keys().next().value);
+    }
+    return res;
+  } finally { done(); }
+}
+
+async function upstreamRetry(method, url, headers, opts) {
   let last = { status: 0, body: '' };
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
