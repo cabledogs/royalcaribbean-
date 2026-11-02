@@ -460,10 +460,20 @@
           selectionFallbackStrategy: 'RECOMMENDATION', editMode: true, reset: false, taxesAndFeesBundled: true, qualifiers: q };
       })
     };
-    var r = await http('POST', 'https://' + (royal ? 'www.royalcaribbean.com' : 'www.celebritycruises.com') + '/room-selection/api/v1/rooms', {
-      headers: { 'User-Agent': UA_WEB, 'Accept': '*/*', 'Content-Type': 'application/json', 'brand': royal ? 'R' : 'C', 'country': 'USA' },
-      body: JSON.stringify(body)
-    });
+    function post(b) {
+      return http('POST', 'https://' + (royal ? 'www.royalcaribbean.com' : 'www.celebritycruises.com') + '/room-selection/api/v1/rooms', {
+        headers: { 'User-Agent': UA_WEB, 'Accept': '*/*', 'Content-Type': 'application/json', 'brand': royal ? 'R' : 'C', 'country': 'USA' },
+        body: JSON.stringify(b)
+      });
+    }
+    var r = await post(body);
+    var discounted = !!(o.loyaltyNumber || o.state);
+    if ((!r || r.status !== 200) && discounted) {
+      // the loyalty number / state may not be accepted by this service: ask again without them
+      body.rooms.forEach(function (x) { delete x.qualifiers.loyaltyNumber; delete x.qualifiers.stateCode; });
+      r = await post(body);
+      discounted = false;
+    }
     if (!r || r.status !== 200) {
       var why = r && r.body ? String(r.body).replace(/\s+/g, ' ').slice(0, 200) : '';
       throw new Error('Could not get room options (' + (r ? r.status : 'no response') + (why ? ': ' + why : '') + ')');
@@ -473,6 +483,7 @@
     var res = parseRoomOptions(j);
     res.rooms = (o.rooms || []).map(function (r) { return { adults: r.adults, children: r.children || 0 }; });
     res.start = start;
+    res.discounted = discounted;
     if (o.keepRaw) res.raw = j;
     return res;
   }
