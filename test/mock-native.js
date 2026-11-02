@@ -45,7 +45,11 @@
     }
     if (url.indexOf('/auth/oauth2/access_token') > 0) return { access_token: 'x.' + btoa(JSON.stringify({ sub: 'acct42' })) + '.y' };
     if (url.indexOf('/guestAccounts/acct42') > 0) return { payload: { loyaltyInformation: { crownAndAnchorId: '987654321', crownAndAnchorSocietyLoyaltyTier: 'DIAMOND', crownAndAnchorSocietyLoyaltyIndividualPoints: 93 }, contactInformation: { address: { residencyCountryCode: 'USA', state: 'FL' } } } };
-    if (url.indexOf('/profileBookings/enriched/acct42') > 0) return { payload: { profileBookings: [] } };
+    if (url.indexOf('/profileBookings/enriched/acct42') > 0) return { payload: { profileBookings: [{ bookingId: 'R123', passengerId: 'P1', shipCode: 'WN', sailDate: '20270110', numberOfNights: 7, stateroomNumber: '8341', passengers: [{ firstName: 'ALEX' }] }] } };
+    if (/\/orderHistory\?/.test(url)) return { payload: { myOrders: [{ orderCode: 'O1', orderTotals: { total: 594.93 }, owner: true }] } };
+    if (/\/orderHistory\/O1\?/.test(url)) return { payload: { orderHistoryDetailItems: [{ productSummary: { title: 'Deluxe Beverage Package', defaultVariantId: '3005', productTypeCategory: { id: 'pt_beverage' }, salesUnit: 'PER_DAY' },
+      guests: [{ id: 'P1', reservationId: 'R123', firstName: 'ALEX', guestType: 'ADULT', priceDetails: { subtotal: 594.93, quantity: 1, currency: 'USD' } }] }] } };
+    if (url.indexOf('/catalog/v2/WN/categories/pt_beverage/products/3005') > 0) return { payload: { title: 'Deluxe Beverage Package', startingFromPrice: { adultPromotionalPrice: 84.99 } } };
     if (url.indexOf('/mobile/v2/ships') > 0) return { payload: { ships: [] } };
     if (url.indexOf('/web/v2/ships') > 0) return { payload: { ships: [{ shipCode: 'WN', name: 'WONDER OF THE SEAS' }, { shipCode: 'IC', name: 'ICON OF THE SEAS' }, { shipCode: 'BY', name: 'CELEBRITY BEYOND' }] } };
     if (/voyages$/.test(url)) return { payload: { voyages: [{ sailDate: '20270110', voyageDescription: '7 Night Western Caribbean', duration: 7, voyageCode: 'W123' }, { sailDate: '20270215', voyageDescription: '4 Night Bahamas & Perfect Day', duration: 4, voyageCode: 'W456' }] } };

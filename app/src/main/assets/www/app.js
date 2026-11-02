@@ -709,8 +709,8 @@
       catsP.then(function (cats) {
         if (!alive()) return;
         var mine = cats.filter(function (c) { return c.tab === tab; });
-        if (tab !== 'excursions') return productsTab(body, ship, sailing, tab, mine, ports, alive);
-        itinP.then(function () { if (alive()) productsTab(body, ship, sailing, tab, mine, ports, alive); });
+        if (tab !== 'excursions') return productsTab(body, ship, sailing, tab, mine, ports, alive, p.owned || []);
+        itinP.then(function () { if (alive()) productsTab(body, ship, sailing, tab, mine, ports, alive, p.owned || []); });
       }).catch(function (e) { if (alive()) { clear(body); add(body, [errBox(e), h('button', { class: 'btn block', text: 'Try again', onclick: render })]); } });
     }
     show();
@@ -868,7 +868,7 @@
     draw();
   }
 
-  function productsTab(body, ship, sailing, tab, cats, ports, alive) {
+  function productsTab(body, ship, sailing, tab, cats, ports, alive, owned) {
     clear(body);
     var tabInfo = TABS.filter(function (t) { return t.id === tab; })[0];
     if (!cats.length) { add(body, empty(tabInfo.e, 'No ' + tabInfo.label.toLowerCase() + ' packages are for sale on this sailing yet', 'Packages usually appear closer to sailing.')); return; }
@@ -941,7 +941,8 @@
       var bell = h('button', { class: 'bell' + (findAlert(base) ? ' on' : ''), 'aria-label': 'Price alert for ' + it.title, text: '\u{1F514}' });
       bell.onclick = function () { openAlertSheet(JSON.parse(JSON.stringify(base)), bell); };
       return h('div', { class: 'prod' },
-        h('div', { class: 'grow' }, h('div', { class: 't', text: it.title }), it.variants.length ? h('div', { class: 'v', text: 'Also: ' + it.variants.join(', ') }) : null),
+        h('div', { class: 'grow' }, h('div', { class: 't', text: it.title }), it.variants.length ? h('div', { class: 'v', text: 'Also: ' + it.variants.join(', ') }) : null,
+          owned.indexOf(String(it.title).toLowerCase()) >= 0 ? h('span', { class: 'pill ok', text: '✓ You bought this' }) : null),
         h('div', { class: 'price' }, it.base ? h('s', { text: money(it.base, it.currency) }) : null, h('b', { text: money(it.price, it.currency) }), it.unit ? h('span', { class: 'u', text: 'per ' + it.unit }) : null),
         bell);
     }
@@ -1081,6 +1082,16 @@
     Core.getProfile(http, session).then(function (p) { profile = p; if (document.body.contains(box)) render(p); }).catch(function () { /* optional */ });
   }
 
+  /* open a booked cruise's sailing page: every add-on for sale, with price alerts */
+  function openBooking(b) {
+    var owned = b.items.map(function (i) { return String(i.title || '').toLowerCase(); });
+    Promise.all([api.ships().catch(function () { return []; }), api.sailings(b.ship).catch(function () { return []; })]).then(function (r) {
+      var ship = r[0].filter(function (s) { return s.code === b.ship; })[0] || { code: b.ship, name: b.shipName, brand: 'royal' };
+      var sailing = r[1].filter(function (x) { return x.date === b.sailDate; })[0] || { date: b.sailDate, description: '', duration: b.nights, voyageCode: '' };
+      go('sailing', { ship: ship, sailing: sailing, tab: pref('lastTab', 'drinks') === 'cabins' ? 'drinks' : pref('lastTab', 'drinks'), owned: owned });
+    });
+  }
+
   function drawResults(out, bookings, busy) {
     if (!bookings) return;
     clear(out);
@@ -1092,7 +1103,12 @@
     });
     if (savings > 0) add(out, h('div', { class: 'card', style: 'border-left:5px solid var(--coral)' }, h('b', { text: 'You could save about ' + money(savings) }), h('div', { class: 'small muted', text: 'Cancel and rebook the items marked below (per person / per day prices).' })));
     bookings.forEach(function (b) {
-      add(out, h('div', { class: 'cat-h' }, h('b', { text: b.shipName + ' · ' + Core.fmtSailDate(b.sailDate) }), h('span', { class: 'small muted', text: '#' + b.reservationId + ' · Room ' + b.room })));
+      add(out, h('button', { class: 'item cruise-link', 'aria-label': 'Shop add-ons for ' + b.shipName + ' ' + Core.fmtSailDate(b.sailDate), onclick: function () { openBooking(b); } },
+        h('div', { class: 'grow' },
+          h('div', { class: 't', text: b.shipName + ' · ' + Core.fmtSailDate(b.sailDate) }),
+          h('div', { class: 's', text: '#' + b.reservationId + ' · Room ' + b.room + ' · ' + b.nights + ' nights' }),
+          h('div', { class: 's', style: 'color:var(--sea);font-weight:600', text: '\u{1F6D2} Shop drinks, dining, Wi-Fi & excursions · set alerts' })),
+        h('span', { class: 'chev', text: '›' })));
       if (b.balanceDue) add(out, h('div', { class: 'notice', text: 'Remaining cruise balance: ' + money(b.balanceDue) }));
       if (!b.items.length) { add(out, h('div', { class: 'card small muted', text: busy ? 'Checking…' : 'No paid Cruise Planner purchases found.' })); return; }
       add(out, h('div', { class: 'list' }, b.items.map(function (i) {

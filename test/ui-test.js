@@ -67,6 +67,13 @@ const path = require('path');
   await page.click('text=Use these for my cabin prices');
   await page.waitForSelector('text=Used for your cabin prices');
   await shot('9-profile');
+  // tap a booked cruise: its add-ons open, with the bought item marked and alert bells
+  await page.waitForSelector('text=Shop drinks, dining, Wi-Fi & excursions');
+  await page.click('[aria-label^="Shop add-ons for"]');
+  await page.waitForSelector('text=✓ You bought this');
+  await page.waitForSelector('button[aria-label="Price alert for Refreshment Package"]');
+  await shot('9b-booked-cruise-addons');
+  await page.click('#back');
   await page.click('[data-root=settings]'); await page.waitForSelector('text=Currency');
   const ca = await page.inputValue('input[placeholder="e.g. 123456789"]');
   if (ca !== '987654321') throw new Error('C&A not saved: ' + ca);
