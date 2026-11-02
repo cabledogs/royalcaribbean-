@@ -209,7 +209,7 @@ function upstreamOnce(method, url, headers, body, hops) {
  */
 const SITE_HOSTS = new Set(['www.royalcaribbean.com', 'www.celebritycruises.com'].concat(env.SITE_HOSTS ? env.SITE_HOSTS.split(',') : []));
 const SITE_GAP_MS = parseInt(env.SITE_GAP_MS || '700', 10);
-const SITE_COOLDOWN_MS = parseInt(env.SITE_COOLDOWN_MS || String(3 * 60e3), 10);
+const SITE_COOLDOWN_MS = parseInt(env.SITE_COOLDOWN_MS || String(10 * 60e3), 10);
 const siteState = new Map(); // host -> {active, queue, nextAt, coolUntil}
 const siteCache = new Map(); // key -> {t, res}
 
@@ -580,7 +580,7 @@ async function api(req, res, url) {
     try {
       const r = await sendSms(phone, SMS.testMessage(smsFormatOpts()));
       return send(res, 200, { ok: true, info: r.info, quotaRemaining: r.quotaRemaining });
-    } catch (e) { return send(res, 502, { error: e.message }); }
+    } catch (e) { return send(res, 424, { error: e.message }); }
   }
   if (p === '/api/me/password' && method === 'POST') {
     const b = (await readJson(req, 4096)) || {};
@@ -628,7 +628,7 @@ async function api(req, res, url) {
     if (/^[A-Z]{2}$/.test(String(o.state || ''))) opts.state = String(o.state);
     for (const k of ['senior', 'military', 'police', 'fire']) if (o[k] === true) opts[k] = true;
     try { return send(res, 200, await Core.getCabins(upstreamHttp, opts)); }
-    catch (e) { return send(res, 502, { error: e.message }); }
+    catch (e) { return send(res, 424, { error: e.message }); }
   }
 
   /* ---- admin ---- */
@@ -708,7 +708,7 @@ async function api(req, res, url) {
       try {
         const r = await sendSms(phone, SMS.testMessage(smsFormatOpts()));
         return send(res, 200, { ok: true, info: r.info });
-      } catch (e) { return send(res, 502, { error: e.message }); }
+      } catch (e) { return send(res, 424, { error: e.message }); }
     }
     const m = p.match(/^\/api\/admin\/users\/([^/]+)$/);
     if (m && method === 'DELETE') {
