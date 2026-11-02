@@ -472,12 +472,13 @@
     if (!j || !Array.isArray(j.rooms)) throw new Error('Unexpected room options reply');
     var res = parseRoomOptions(j);
     res.start = start;
+    if (o.keepRaw) res.raw = j;
     return res;
   }
 
   function parseRoomOptions(j) {
     var pairsSeen = {}, pairs = [];
-    var rooms = (j.rooms || []).map(function (rm) {
+    function collect(rm) {
       var cats = {};
       (function walk(node, ancestors) {
         if (!node || typeof node !== 'object') return;
@@ -515,7 +516,23 @@
         Object.keys(node).forEach(function (k) { if (node[k] && typeof node[k] === 'object') walk(node[k], next); });
       })(rm, []);
       return Object.keys(cats).map(function (k) { return cats[k]; }).filter(function (c) { return c.price !== null && c.available !== 0; });
-    });
+    }
+    var rooms = (j.rooms || []).map(collect);
+    // categories may sit outside rooms[] (e.g. one shared options list): then use the whole reply for every room
+    if (!rooms.some(function (l) { return l.length; })) {
+      var shared = collect(Object.assign({}, j, { rooms: undefined }));
+      if (shared.length) rooms = (j.rooms && j.rooms.length ? j.rooms : [0]).map(function () { return shared; });
+    }
+    // Royal marks connecting categories / cabin pairs once for the whole multi-room request (seen on room 1
+    // only in a real reply), so a category marked on ANY room counts for the group
+    var connCodes = {}, pairsByCode = {};
+    rooms.forEach(function (l) { l.forEach(function (c) {
+      if (c.connecting) connCodes[c.code] = 1;
+      if (c.pairs.length && !pairsByCode[c.code]) pairsByCode[c.code] = c.pairs;
+    }); });
+    rooms = rooms.map(function (l) { return l.map(function (c) {
+      return Object.assign({}, c, { connecting: !!connCodes[c.code], pairs: c.pairs.length ? c.pairs : (pairsByCode[c.code] || []) });
+    }); });
     return { rooms: rooms, pairs: pairs };
   }
 
