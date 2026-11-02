@@ -1182,6 +1182,7 @@
       h('button', { class: 'btn block', style: 'margin-top:8px', text: 'Save discounts', onclick: save }));
   }
 
+  function hourText(hh) { return (hh % 12 || 12) + ':00 ' + (hh < 12 ? 'AM' : 'PM'); }
   function webAccountSettings(v) {
     var box = h('div');
     add(v, box);
@@ -1189,26 +1190,16 @@
       var s = me.settings || {};
       var phone = h('input', { type: 'tel', autocomplete: 'tel', placeholder: '+1 555 123 4567', value: s.phone || '' });
       var sms = h('input', { type: 'checkbox', checked: !!s.smsEnabled });
-      var mode = h('select', { 'aria-label': 'When to text me' },
-        h('option', { value: 'daily', text: 'Once a day - all drops in one text', selected: s.smsMode !== 'each' }),
-        h('option', { value: 'each', text: 'Right after each check', selected: s.smsMode === 'each' }));
-      var hour = h('select', { 'aria-label': 'Daily text time' });
-      for (var hh = 0; hh < 24; hh++) {
-        add(hour, h('option', { value: String(hh), text: (hh % 12 || 12) + ':00 ' + (hh < 12 ? 'AM' : 'PM'), selected: (s.smsHour === undefined ? 9 : s.smsHour) === hh }));
-      }
-      var hourRow = h('label', { class: 'field' }, h('span', { text: 'Daily text at' }), hour);
-      function syncMode() { hourRow.hidden = mode.value !== 'daily'; }
-      mode.onchange = syncMode; syncMode();
-      var tz = ''; try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { /* server uses its own */ }
-      function values() { return { phone: phone.value.trim(), smsEnabled: sms.checked, smsMode: mode.value, smsHour: parseInt(hour.value, 10), tz: tz }; }
+      function values() { return { phone: phone.value.trim(), smsEnabled: sms.checked }; }
+      var pl = me.sendPlan || { mode: 'daily', hour: 9 };
+      var when = pl.mode === 'each' ? 'Texts go out right after each price check.' : 'All your price drops come together in one text a day, around ' + hourText(pl.hour) + (pl.tz ? ' (' + pl.tz.replace(/_/g, ' ') + ' time)' : '') + '.';
       var msg = h('div');
       add(box, h('div', { class: 'card' },
         h('b', { text: 'Text message alerts' }),
         h('p', { class: 'small muted', text: me.smsConfigured ? 'Sent through ' + me.smsProvider + ' when one of your alerts drops in price.' : 'Text messages are not set up yet' + (me.admin ? ' - choose a provider below.' : ' - ask the admin.') }),
         h('label', { class: 'field' }, h('span', { text: 'Mobile number' }), phone),
         h('label', { class: 'toggle' }, h('span', { text: 'Text me price drops' }), sms),
-        h('label', { class: 'field' }, h('span', { text: 'When to text me' }), mode), hourRow,
-        h('p', { class: 'small muted', text: 'You only get another text for the same item if its price falls below the price we last texted you.' }),
+        h('p', { class: 'small muted', text: when + ' You only get another text for the same item if its price falls below the price we last texted you.' }),
         msg,
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn', text: 'Save', onclick: function () {
@@ -1268,6 +1259,17 @@
       var fieldsBox = h('div'), inputs = {};
       var link = h('input', { type: 'url', placeholder: 'https://cruise.example.com', value: c.link });
       var incLink = h('input', { type: 'checkbox', checked: c.includeLink });
+      var plan = c.plan || { mode: 'daily', hour: 9, tz: '' };
+      var mode = h('select', { 'aria-label': 'When texts go out' },
+        h('option', { value: 'daily', text: 'Once a day - all of a user\'s drops in one text', selected: plan.mode !== 'each' }),
+        h('option', { value: 'each', text: 'Right after each price check', selected: plan.mode === 'each' }));
+      var hour = h('select', { 'aria-label': 'Daily text time' });
+      for (var hh = 0; hh < 24; hh++) add(hour, h('option', { value: String(hh), text: hourText(hh), selected: plan.hour === hh }));
+      var myTz = ''; try { myTz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { /* server time */ }
+      var tzUse = plan.tz || myTz;
+      var hourRow = h('label', { class: 'field' }, h('span', { text: 'Daily text time' + (tzUse ? ' (' + tzUse.replace(/_/g, ' ') + ')' : '') }), hour);
+      function syncMode() { hourRow.hidden = mode.value !== 'daily'; }
+      mode.onchange = syncMode; syncMode();
       var testPhone = h('input', { type: 'tel', placeholder: '+15551234567' });
       var msg = h('div'), status = h('span', { class: 'pill ' + (c.ready ? 'ok' : 'warn'), text: c.ready ? 'Working setup' : 'Not set up' });
       function drawFields() {
@@ -1293,7 +1295,7 @@
       function collect() {
         var values = {}; values[provSel.value] = {};
         Object.keys(inputs).forEach(function (k) { values[provSel.value][k] = inputs[k].value; });
-        return { provider: provSel.value, values: values, link: link.value.trim(), includeLink: incLink.checked };
+        return { provider: provSel.value, values: values, link: link.value.trim(), includeLink: incLink.checked, mode: mode.value, hour: parseInt(hour.value, 10), tz: tzUse };
       }
       add(card, [
         h('div', { class: 'row' }, h('b', { class: 'grow', text: '\u{1F4E8} Text message provider (admin)' }), status),
@@ -1301,6 +1303,8 @@
         fieldsBox,
         h('label', { class: 'field' }, h('span', { text: 'This site\'s address (for a link in texts)' }), link),
         h('label', { class: 'toggle small' }, h('span', { text: 'Add the link to the end of each text' }), incLink),
+        h('label', { class: 'field', style: 'margin-top:10px' }, h('span', { text: 'When texts go out (all users)' }), mode), hourRow,
+        h('p', { class: 'small muted', text: 'Users get another text for the same item only when its price falls below the price they were last texted.' }),
         msg,
         h('button', { class: 'btn block', text: 'Save provider settings', onclick: function () {
           clear(msg);

@@ -304,8 +304,14 @@ function validTz(tz) {
 }
 
 /* the user's local date and hour (their browser's time zone, else the server's) */
-function localNow(rec, now) {
-  const tz = rec.settings && validTz(rec.settings.tz) ? rec.settings.tz : undefined;
+/* when texts go out is one setting for everyone, chosen by the admin */
+function sendPlan() {
+  const c = smsConf();
+  return { mode: c.mode === 'each' ? 'each' : 'daily', hour: Number.isInteger(c.hour) ? c.hour : 9, tz: validTz(c.tz) ? c.tz : '' };
+}
+
+function localNow(tz, now) {
+  tz = validTz(tz) ? tz : undefined;
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
     .formatToParts(now || new Date());
   const get = t => (parts.find(p => p.type === t) || {}).value;
@@ -336,7 +342,7 @@ async function notifyUser(name, drops) {
     rec.pendingDrops = pending.slice(-100);
     await saveDb();
   }
-  if (rec.settings.smsMode === 'each') await flushTexts(name);
+  if (sendPlan().mode === 'each') await flushTexts(name);
 }
 
 async function flushTexts(name) {
@@ -361,11 +367,12 @@ async function digestTick(now) {
   if (digesting) return;
   digesting = true;
   try {
+    const plan = sendPlan();
+    const t = localNow(plan.tz, now), hour = plan.hour;
     for (const name of Object.keys(db.users)) {
       const rec = db.users[name];
-      if (!rec.pendingDrops || !rec.pendingDrops.length || !rec.settings || rec.settings.smsMode === 'each') continue;
-      const t = localNow(rec, now);
-      const hour = Number.isInteger(rec.settings.smsHour) ? rec.settings.smsHour : 9;
+      if (!rec.pendingDrops || !rec.pendingDrops.length || !rec.settings) continue;
+      if (plan.mode === 'each') { await flushTexts(name); continue; }
       if (t.hour < hour || rec.lastDigest === t.date) continue;
       // a failed send is retried at most once an hour
       if (rec.lastDigestTry && Date.now() - rec.lastDigestTry < 3600e3) continue;
@@ -441,9 +448,8 @@ function publicUser(name, rec) {
   return {
     username: name, admin: !!rec.admin, smsConfigured: smsReady(),
     smsProvider: smsReady() ? SMS.PROVIDERS[smsConf().provider].label : '',
-    settings: { phone: (rec.settings && rec.settings.phone) || '', smsEnabled: !!(rec.settings && rec.settings.smsEnabled),
-      smsMode: rec.settings && rec.settings.smsMode === 'each' ? 'each' : 'daily',
-      smsHour: rec.settings && Number.isInteger(rec.settings.smsHour) ? rec.settings.smsHour : 9 },
+    settings: { phone: (rec.settings && rec.settings.phone) || '', smsEnabled: !!(rec.settings && rec.settings.smsEnabled) },
+    sendPlan: sendPlan(),
     pendingTexts: (rec.pendingDrops || []).length
   };
 }
@@ -512,12 +518,7 @@ async function api(req, res, url) {
     const b = (await readJson(req, 4096)) || {};
     const phone = normalizePhone(b.phone);
     if (phone === null) return send(res, 400, { error: 'That phone number does not look right. Use digits, e.g. +15551234567' });
-    me.rec.settings = {
-      phone, smsEnabled: !!b.smsEnabled && !!phone,
-      smsMode: b.smsMode === 'each' ? 'each' : 'daily',
-      smsHour: Number.isInteger(b.smsHour) && b.smsHour >= 0 && b.smsHour <= 23 ? b.smsHour : 9,
-      tz: validTz(b.tz) ? b.tz : ''
-    };
+    me.rec.settings = { phone, smsEnabled: !!b.smsEnabled && !!phone };
     await saveDb();
     return send(res, 200, publicUser(me.name, me.rec));
   }
@@ -610,7 +611,7 @@ async function api(req, res, url) {
         }
       }
       return send(res, 200, {
-        provider: c.provider, ready: smsReady(), link: c.link || '', includeLink: !!c.includeLink, values,
+        provider: c.provider, ready: smsReady(), link: c.link || '', includeLink: !!c.includeLink, values, plan: sendPlan(),
         providers: Object.entries(SMS.PROVIDERS).map(([id, prov]) => ({ id, label: prov.label, help: prov.help, fields: prov.fields }))
       });
     }
@@ -640,6 +641,10 @@ async function api(req, res, url) {
       c.provider = b.provider;
       c.link = link;
       c.includeLink = !!b.includeLink && !!link;
+      // when texts go out (for every user)
+      if (b.mode === 'each' || b.mode === 'daily') c.mode = b.mode;
+      if (Number.isInteger(b.hour) && b.hour >= 0 && b.hour <= 23) c.hour = b.hour;
+      if (b.tz !== undefined) c.tz = validTz(b.tz) ? b.tz : '';
       await saveDb();
       log('sms settings changed to', c.provider, 'by', me.name);
       return send(res, 200, { ok: true, ready: smsReady() });

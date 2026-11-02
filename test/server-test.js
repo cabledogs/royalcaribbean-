@@ -92,7 +92,9 @@ async function call(method, p, body, who = 'a', extra = {}) {
     assert((await call('PUT', '/api/alerts', [alert], 'b')).json[0].evil === undefined, 'alerts saved and sanitised');
     assert((await call('GET', '/api/alerts')).json.length === 0, 'alerts are per user');
     assert((await call('PUT', '/api/me/settings', { phone: 'abc', smsEnabled: true }, 'b')).status === 400, 'bad phone refused');
-    assert((await call('PUT', '/api/me/settings', { phone: '+1 (555) 123-4567', smsEnabled: true, smsMode: 'each' }, 'b')).json.settings.phone === '+15551234567', 'phone saved');
+    assert((await call('PUT', '/api/me/settings', { phone: '+1 (555) 123-4567', smsEnabled: true }, 'b')).json.settings.phone === '+15551234567', 'phone saved');
+    assert((await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} }, mode: 'each' }, 'b')).status === 403, 'only the admin decides when texts go out');
+    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} }, mode: 'each' });
     const chk = await call('POST', '/api/alerts/check', undefined, 'b');
     assert(chk.json[0].status === 'dropped' && chk.json[0].lastPrice === 129, 'price drop detected');
     assert(texts.length === 1 && texts[0].phone === '+15551234567' && texts[0].key === 'test-key-abcd', 'Textbelt SMS sent with stored key');
@@ -119,18 +121,18 @@ async function call(method, p, body, who = 'a', extra = {}) {
     await call('PUT', '/api/alerts', now.concat([bev(1), bev(2)]), 'b');
     // pick a time zone where it is not late evening, so "2 hours from now" is still today
     const utcH = new Date().getUTCHours(), tz = utcH <= 21 ? 'UTC' : 'Etc/GMT+12', hourNow = utcH <= 21 ? utcH : utcH - 12, later = hourNow + 2;
-    await call('PUT', '/api/me/settings', { phone: '+15551234567', smsEnabled: true, smsMode: 'daily', smsHour: later, tz }, 'b');
+    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} }, mode: 'daily', hour: later, tz });
     await call('POST', '/api/alerts/check', undefined, 'b');
     await new Promise(r => setTimeout(r, 900));
     assert(texts.length === 1 && (await call('GET', '/api/me', undefined, 'b')).json.pendingTexts === 2, 'daily mode: drops queued until the chosen hour');
-    await call('PUT', '/api/me/settings', { phone: '+15551234567', smsEnabled: true, smsMode: 'daily', smsHour: hourNow, tz }, 'b');
+    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} }, mode: 'daily', hour: hourNow, tz });
     await new Promise(r => setTimeout(r, 900));
     assert(texts.length === 2 && /^Cruise Deals: 2 price drops/.test(texts[1].message), 'one combined text at the chosen hour: ' + JSON.stringify(texts[1] && texts[1].message));
     fs.writeFileSync(path.join(data, 'mock-price'), '100'); await call('POST', '/api/alerts/check', undefined, 'b');
     await new Promise(r => setTimeout(r, 900));
     assert(texts.length === 2 && (await call('GET', '/api/me', undefined, 'b')).json.pendingTexts === 1, 'second drop the same day waits for tomorrow');
     texts.length = 1;
-    await call('PUT', '/api/me/settings', { phone: '+15551234567', smsEnabled: true, smsMode: 'each' }, 'b');
+    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} }, mode: 'each' });
 
     assert((await call('POST', '/api/me/test-sms', undefined, 'b')).json.quotaRemaining === 41, 'test SMS works');
 
