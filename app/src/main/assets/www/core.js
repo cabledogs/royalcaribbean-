@@ -328,7 +328,7 @@
         if (cheapest === null || price < cheapest) cheapest = price;
         if (connecting && (conn === null || price < conn)) { conn = price; connName = name; }
       });
-      return { name: t.name || 'Stateroom', price: cheapest, connectingPrice: conn, connectingName: connName, subtypes: subtypes };
+      return { name: t.name || 'Stateroom', code: typeof t.code === 'string' ? t.code : '', price: cheapest, connectingPrice: conn, connectingName: connName, subtypes: subtypes };
     });
   }
 
@@ -417,9 +417,38 @@
    *   o: {packageCode, sailDate (YYYYMMDD), currency, host, rooms:[{adults, children}], loyaltyNumber, state, senior, ...}
    * Returns {rooms: [[category...] per requested room], pairs: [[cabin, cabin, categoryCode, kind]...]}
    */
+  /*
+   * The rooms service needs a real starting category (stateroomSubtypeCode) or it answers 400.
+   * Take one from the sailing's cabin page: an interior that is for sale, not a guarantee if possible.
+   */
+  var startMemo = {};
+  var TYPE_CODES = { interior: 'INTERIOR', ocean: 'OUTSIDE', balcony: 'BALCONY', suite: 'DELUXE' };
+  async function startingCategory(http, o) {
+    var key = o.packageCode + '|' + o.sailDate + '|' + (o.host || '');
+    if (startMemo[key]) return startMemo[key];
+    var r0 = (o.rooms && o.rooms[0]) || { adults: 2, children: 0 };
+    var rows = await getCabins(http, { packageCode: o.packageCode, sailDate: o.sailDate, currency: o.currency, host: o.host, adults: r0.adults, children: r0.children });
+    var order = ['interior', 'ocean', 'balcony', 'suite', 'other'];
+    rows = rows.slice().sort(function (a, b) { return order.indexOf(cabinTypeOf(a.name)) - order.indexOf(cabinTypeOf(b.name)); });
+    var pick = null;
+    [false, true].forEach(function (allowGty) {
+      rows.forEach(function (row) {
+        (row.subtypes || []).forEach(function (st) {
+          if (pick || !st.code || st.price === null || (st.guarantee && !allowGty)) return;
+          var kind = cabinTypeOf(row.name);
+          pick = { typeCode: /^[A-Z]{3,}$/.test(row.code || '') ? row.code : (TYPE_CODES[kind] || 'INTERIOR'), subtype: st.code };
+        });
+      });
+    });
+    if (!pick) throw new Error('This sailing looks sold out');
+    startMemo[key] = pick;
+    return pick;
+  }
+
   async function getRoomOptions(http, o) {
     var d = String(o.sailDate);
     var royal = (o.host || 'www.royalcaribbean.com').indexOf('celebrity') < 0;
+    var start = o.subtype ? { typeCode: o.typeCode || 'INTERIOR', subtype: o.subtype } : await startingCategory(http, o);
     var body = {
       countryCode: 'USA', packageId: o.packageCode, sailDate: d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8),
       currencyCode: o.currency || 'USD', language: 'en', options: true, roomNumbers: true, platform: 'web',
@@ -427,7 +456,7 @@
         var q = { fireFighter: !!o.fire, military: !!o.military, police: !!o.police, senior: !!o.senior };
         if (o.loyaltyNumber) q.loyaltyNumber = String(o.loyaltyNumber);
         if (o.state) q.stateCode = String(o.state);
-        return { adultCount: r.adults, childCount: r.children || 0, stateroomTypeCode: 'INTERIOR', accessible: false,
+        return { adultCount: r.adults, childCount: r.children || 0, stateroomTypeCode: start.typeCode, stateroomSubtypeCode: start.subtype, accessible: false,
           selectionFallbackStrategy: 'RECOMMENDATION', editMode: true, reset: false, taxesAndFeesBundled: true, qualifiers: q };
       })
     };
@@ -435,10 +464,15 @@
       headers: { 'User-Agent': UA_WEB, 'Accept': '*/*', 'Content-Type': 'application/json', 'brand': royal ? 'R' : 'C', 'country': 'USA' },
       body: JSON.stringify(body)
     });
-    if (!r || r.status !== 200) throw new Error('Could not get room options (' + (r ? r.status : 'no response') + ')');
+    if (!r || r.status !== 200) {
+      var why = r && r.body ? String(r.body).replace(/\s+/g, ' ').slice(0, 200) : '';
+      throw new Error('Could not get room options (' + (r ? r.status : 'no response') + (why ? ': ' + why : '') + ')');
+    }
     var j = parseJson(r.body);
     if (!j || !Array.isArray(j.rooms)) throw new Error('Unexpected room options reply');
-    return parseRoomOptions(j);
+    var res = parseRoomOptions(j);
+    res.start = start;
+    return res;
   }
 
   function parseRoomOptions(j) {

@@ -16,6 +16,7 @@ const roomList = rooms.map(r => { const [a, c] = r.split('+').map(Number); retur
 (async () => {
   try {
     const ro = await Core.getRoomOptions(upstream, { packageCode: pkg, sailDate: date, currency: 'USD', host: 'www.royalcaribbean.com', rooms: roomList });
+    console.log('Started from category ' + ro.start.subtype + ' (' + ro.start.typeCode + ')');
     ro.rooms.forEach((list, i) => {
       console.log('Room ' + (i + 1) + ' (' + rooms[i] + '): ' + list.length + ' categories, connecting: ' + list.filter(c => c.connecting).map(c => c.code + ' ' + c.name + ' $' + c.price).join(' | '));
     });

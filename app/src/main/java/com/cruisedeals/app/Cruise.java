@@ -231,6 +231,7 @@ final class Cruise {
             }
             JSONObject c = new JSONObject();
             c.put("name", t.optString("name", "Stateroom"));
+            c.put("code", t.opt("code") instanceof String ? t.optString("code") : "");
             c.put("price", Double.isNaN(cheapest) ? JSONObject.NULL : (Object) Double.valueOf(cheapest));
             c.put("connectingPrice", Double.isNaN(conn) ? JSONObject.NULL : (Object) Double.valueOf(conn));
             c.put("connectingName", connName);
