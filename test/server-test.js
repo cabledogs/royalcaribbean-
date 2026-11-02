@@ -77,7 +77,7 @@ async function call(method, p, body, who = 'a', extra = {}) {
     const rr = await call('POST', '/api/proxy', { method: 'POST', url: 'https://www.royalcaribbean.com/room-selection/api/v1/rooms',
       headers: { 'Content-Type': 'application/json', brand: 'R', country: 'USA', Accept: '*/*' }, body: JSON.stringify({ packageId: 'ICX', sailDate: '2027-09-05', rooms: [{ adultCount: 2, childCount: 1, stateroomSubtypeCode: 'T5' }, { adultCount: 2, childCount: 1, stateroomSubtypeCode: 'T5' }] }) });
     const rj = JSON.parse(rr.json.body);
-    assert(rr.json.status === 200 && rj.rooms[0].options.stateroomTypes[0].categories[0].connecting === true, 'rooms service relayed with brand/country headers');
+    assert(rr.json.status === 200 && rj.rooms[0].options.stateroomTypes[0].stateroomSubtypes[0].connecting === true, 'rooms service relayed with brand/country headers');
     assert((await call('POST', '/api/admin/users', { username: 'firstmate', password: 'short' })).status === 400, 'weak password refused');
     assert((await call('POST', '/api/admin/users', { username: 'firstmate', password: 'aye-aye-sir-42' })).status === 200, 'admin creates user');
     assert((await call('POST', '/api/login', { username: 'firstmate', password: 'aye-aye-sir-42' }, 'b')).status === 200, 'new user logs in');

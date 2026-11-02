@@ -18,9 +18,8 @@ module.exports = async function (method, url, o) {
     const b = JSON.parse(o.body);
     if (o.headers.brand !== 'R' || o.headers.country !== 'USA') return { status: 403, body: 'missing brand/country headers' };
     if (!b.rooms.every(r => r.stateroomSubtypeCode)) return { status: 400, body: '{"error":"stateroomSubtypeCode is required"}' };
-    const room = r => ({ request: r, options: { stateroomTypes: [{ name: 'Interior', summary: 'x', connecting: true, categories: [
-      { categoryCode: 'T5', image: { alt: 'Surfside Family Interior' }, connecting: b.rooms.length > 1, stateroomsAvailable: 5, pricing: { invoice: { total: 1411.69 } },
-        cabins: [{ cabinNumber: '8341', connectingCabin: { cabinNumber: '8343' } }] }] }] } });
+    const room = (r, i) => i > 0 ? { request: r, room: {} } : ({ request: r, options: { stateroomTypes: [{ code: 'INTERIOR', name: 'Interior', summary: 'x', connecting: true, stateroomSubtypes: [
+      { code: 'T5', categoryCode: 'T5', name: 'Surfside Family Interior', connecting: b.rooms.length > 1, stateroomsAvailable: 5, pricing: { invoice: { total: 1411.69 } } }] }] } });
     return json({ sailing: {}, rooms: b.rooms.map(room) });
   }
   if (url.includes('/room-selection/')) {
