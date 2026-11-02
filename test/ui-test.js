@@ -100,6 +100,7 @@ const path = require('path');
   await page.waitForSelector('text=Balcony, Suite: no connecting rooms');
   const rc = await page.evaluate(() => window.__roomCalls.slice(-1)[0]);
   if (rc.rooms.length !== 2 || rc.packageId.length < 4 || !/^\d{4}-\d\d-\d\d$/.test(rc.sailDate)) throw new Error('bad rooms request ' + JSON.stringify(rc));
+  if (rc.rooms[0].stateroomSubtypeCode !== 'T5' || rc.rooms[0].stateroomTypeCode !== 'INTERIOR') throw new Error('should start from a for-sale non-guarantee interior: ' + JSON.stringify(rc.rooms[0]));
   await page.locator('#view .list .item').first().click();
   await page.waitForSelector('text=Find the best split');
   // connecting cabins by ship: pairs learned from the searches above, plus a scan

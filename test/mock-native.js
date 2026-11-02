@@ -30,7 +30,16 @@
     }) };
   }
   function respond(method, url, body) {
-    if (url.indexOf('/room-selection/api/v1/rooms') > 0) { (window.__roomCalls = window.__roomCalls || []).push(JSON.parse(body)); return roomsReply(body); }
+    if (url.indexOf('/room-selection/api/v1/rooms') > 0) {
+      var rb = JSON.parse(body);
+      (window.__roomCalls = window.__roomCalls || []).push(rb);
+      // like the real service: 400 without a starting category
+      if (!rb.rooms.every(function (r) { return r.stateroomSubtypeCode && r.stateroomTypeCode; })) return { __status: 400, error: 'stateroomSubtypeCode is required' };
+      return roomsReply(body);
+    }
+    if (url.indexOf('/room-selection/type-and-subtype') > 0) {
+      return { __raw: '0:["$","x",{"rooms":[{"options":{"stateroomTypes":[{"code":"INTERIOR","name":"Interior","stateroomSubtypes":[{"code":"ZQ","name":"Interior","guarantee":true,"pricing":{"invoice":{"total":1300}}},{"code":"T5","name":"Surfside Family Interior","pricing":{"invoice":{"total":1490}}}]}]}}]}]' };
+    }
     if (url.indexOf('/auth/oauth2/access_token') > 0) return { access_token: 'x.' + btoa(JSON.stringify({ sub: 'acct42' })) + '.y' };
     if (url.indexOf('/guestAccounts/acct42') > 0) return { payload: { loyaltyInformation: { crownAndAnchorId: '987654321', crownAndAnchorSocietyLoyaltyTier: 'DIAMOND', crownAndAnchorSocietyLoyaltyIndividualPoints: 93 }, contactInformation: { address: { residencyCountryCode: 'USA', state: 'FL' } } } };
     if (url.indexOf('/profileBookings/enriched/acct42') > 0) return { payload: { profileBookings: [] } };
@@ -49,7 +58,12 @@
   }
   window.Native = {
     http: function (id, method, url, headers, body) {
-      setTimeout(function () { var r = respond(method, url, body); window.__nativeCb(id, r ? 200 : 404, r ? JSON.stringify(r) : 'nope'); }, 20);
+      setTimeout(function () {
+        var r = respond(method, url, body);
+        if (r && r.__raw) return window.__nativeCb(id, 200, r.__raw);
+        if (r && r.__status) return window.__nativeCb(id, r.__status, JSON.stringify(r));
+        window.__nativeCb(id, r ? 200 : 404, r ? JSON.stringify(r) : 'nope');
+      }, 20);
     },
     cabinPrices: function (id, opts) {
       var o = JSON.parse(opts), n = o.adults + o.children, f = (1 + 0.35 * (n - 2)) * (o.loyaltyNumber ? 0.9 : 1) * (o.state === 'FL' ? 0.95 : 1);
