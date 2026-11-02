@@ -25,9 +25,11 @@ const PROVIDERS = {
       { key: 'url', label: 'API URL (leave blank for textbelt.com)', placeholder: 'https://textbelt.com/text' },
       { key: 'allowLinks', label: 'Textbelt approved my key for links', type: 'checkbox' }
     ],
-    async send(cfg, phone, message) {
+    async send(cfg, phone, message, ctx) {
       if (cfg.allowLinks !== 'yes') message = stripLinks(message);
       const body = new URLSearchParams({ phone, message, key: cfg.key });
+      // replies (STOP / HELP / START) come back to this server, signed with the key
+      if (ctx && ctx.replyUrl) body.set('replyWebhookUrl', ctx.replyUrl);
       const res = await fetch(cfg.url || 'https://textbelt.com/text', { method: 'POST', body, signal: timeout() });
       const j = await res.json().catch(() => ({}));
       if (!j.success) throw new Error('Textbelt: ' + (j.error || 'send failed (HTTP ' + res.status + ')'));
@@ -153,4 +155,4 @@ function samples(opts) {
 /** segments the carrier will bill: 160 chars (153 when split) for plain text */
 function segments(text) { return text.length <= 160 ? 1 : Math.ceil(text.length / 153); }
 
-module.exports = { stripLinks, PROVIDERS, formatDrops, testMessage, samples, segments };
+module.exports = { SAMPLE_DROPS, stripLinks, PROVIDERS, formatDrops, testMessage, samples, segments };

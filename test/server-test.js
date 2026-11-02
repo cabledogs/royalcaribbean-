@@ -151,6 +151,33 @@ async function call(method, p, body, who = 'a', extra = {}) {
     await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: { allowLinks: 'yes' } }, link: 'https://cruise.example.com', includeLink: true });
     await call('POST', '/api/admin/sms/test', { phone: '+15550003333' });
     assert(texts[n0 + 1].message.endsWith('\nhttps://cruise.example.com/'), 'link included once the admin says Textbelt approved links');
+    assert(texts[n0 + 1].replyWebhookUrl === 'https://cruise.example.com/api/sms/reply', 'Textbelt told where to send STOP/HELP replies');
+
+    // public pages for the provider's review
+    assert((await call('PUT', '/api/admin/site', { name: 'Hurm Cruise Deals', owner: 'Site Owner', email: 'owner@example.com' }, 'b')).status === 403, 'only the admin edits the site details');
+    assert((await call('PUT', '/api/admin/site', { name: 'Hurm Cruise Deals', owner: 'Site Owner', email: 'not-an-email' })).status === 400, 'bad contact email refused');
+    assert((await call('PUT', '/api/admin/site', { name: 'Hurm <b>Cruise</b> Deals', owner: 'Site Owner', email: 'owner@example.com' })).status === 200, 'site details saved');
+    for (const pg of ['/about', '/terms', '/privacy', '/sms-terms']) {
+      const r = await fetch(BASE + pg);
+      const t = await r.text();
+      assert(r.status === 200 && t.includes('Hurm &lt;b&gt;Cruise&lt;/b&gt; Deals') && t.includes('owner@example.com') && !t.includes('<b>Cruise</b>'), pg + ' is public, shows the site details, escaped');
+    }
+    const smsPage = await (await fetch(BASE + '/sms-terms')).text();
+    assert(/Reply <b>STOP<\/b>/.test(smsPage) && /Message and data rates may apply/.test(smsPage) && /never sold/.test(smsPage), 'SMS terms cover STOP, HELP, rates and no sharing');
+    assert((await (await fetch(BASE + '/about')).text()).includes('https://cruise.example.com/'), 'About shows a sample text with the link');
+
+    // STOP / START replies from Textbelt (signed with the API key)
+    const crypto = require('crypto');
+    async function reply(text, sign = true) {
+      const body = JSON.stringify({ textId: '1', fromNumber: '+15551234567', text });
+      const ts = String(Math.floor(Date.now() / 1000));
+      const sig = crypto.createHmac('sha256', sign ? 'test-key-abcd' : 'wrong').update(ts + body).digest('hex');
+      return fetch(BASE + '/api/sms/reply', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-textbelt-timestamp': ts, 'X-textbelt-signature': sig }, body });
+    }
+    assert((await reply('STOP', false)).status === 403, 'unsigned reply ignored');
+    assert((await call('GET', '/api/me', undefined, 'b')).json.settings.smsEnabled === true, 'texts still on after a fake STOP');
+    assert((await reply('Stop please')).status === 200 && (await call('GET', '/api/me', undefined, 'b')).json.settings.smsEnabled === false, 'STOP reply turns texts off');
+    assert((await reply('START')).status === 200 && (await call('GET', '/api/me', undefined, 'b')).json.settings.smsEnabled === true, 'START reply turns them back on');
 
     let blocked = false;
     for (let i = 0; i < 12; i++) if ((await call('POST', '/api/login', { username: 'firstmate', password: 'guess' + i }, 'x')).status === 429) blocked = true;

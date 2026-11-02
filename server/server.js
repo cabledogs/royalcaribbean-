@@ -21,6 +21,7 @@ const zlib = require('zlib');
 const WWW = process.env.WWW_DIR || path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'www');
 const Core = require(path.join(WWW, 'core.js'));
 const SMS = require('./sms');
+const { PAGES } = require('./pages');
 
 /* ---------------- configuration ---------------- */
 const env = process.env;
@@ -312,7 +313,68 @@ function smsFormatOpts() {
 async function sendSms(phone, message) {
   if (!smsReady()) throw new Error('Text messages are not set up yet - an admin can do it in Settings.');
   const c = smsConf();
-  return SMS.PROVIDERS[c.provider].send(c.settings[c.provider] || {}, phone, message.slice(0, 1000));
+  const replyUrl = c.link && /^https:\/\//i.test(c.link) ? c.link.replace(/\/+$/, '') + '/api/sms/reply' : '';
+  return SMS.PROVIDERS[c.provider].send(c.settings[c.provider] || {}, phone, message.slice(0, 1000), { replyUrl });
+}
+
+/* ---------------- public pages (About / Terms / Privacy / SMS terms) ---------------- */
+function siteInfo() {
+  db.config = db.config || {};
+  const st = db.config.site || {};
+  const link = smsConf().link || '';
+  return {
+    name: st.name || 'Cruise Deals', owner: st.owner || '', email: st.email || '', updated: st.updated || '',
+    url: link.replace(/\/+$/, ''), smsMode: sendPlan().mode,
+    exampleText: SMS.formatDrops([SMS.SAMPLE_DROPS[0]], { link: link })
+  };
+}
+
+/*
+ * Textbelt sends replies to replyWebhookUrl, signed: X-textbelt-signature = HMAC-SHA256(apiKey, timestamp + body) in hex.
+ * STOP-type words switch texts off for that number, START switches them back on, HELP gets a short help text.
+ */
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0; const chunks = [];
+    req.on('data', c => { size += c.length; if (size > limit) { reject(Object.assign(new Error('Request too large'), { status: 413 })); req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+async function textbeltReply(req, res) {
+  const raw = await readRaw(req, 16384);
+  const key = (smsConf().settings.textbelt || {}).key || '';
+  const ts = String(req.headers['x-textbelt-timestamp'] || ''), sig = String(req.headers['x-textbelt-signature'] || '');
+  const want = key ? crypto.createHmac('sha256', key).update(ts + raw).digest('hex') : '';
+  const fresh = Math.abs(Date.now() / 1000 - Number(ts)) < 15 * 60;
+  if (!key || !sig || !fresh || sig.length !== want.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want))) {
+    log('sms reply rejected (bad signature)');
+    return send(res, 403, { error: 'Bad signature' });
+  }
+  let j = {};
+  try { j = JSON.parse(raw); } catch (e) { return send(res, 400, { error: 'Bad JSON' }); }
+  const from = normalizePhone(j.fromNumber) || '';
+  const digits = from.replace(/\D/g, '').slice(-10);
+  const word = String(j.text || '').trim().toUpperCase().split(/\s+/)[0] || '';
+  const users = Object.keys(db.users).filter(n => {
+    const ph = (db.users[n].settings && db.users[n].settings.phone) || '';
+    return digits && ph.replace(/\D/g, '').slice(-10) === digits;
+  });
+  const site = siteInfo();
+  if (['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'OPTOUT'].includes(word)) {
+    users.forEach(n => { const st = db.users[n].settings; st.smsEnabled = false; st.optedOut = true; db.users[n].pendingDrops = []; });
+    await saveDb();
+    log('sms opt-out by reply for', users.join(', ') || 'unknown number');
+  } else if (['START', 'UNSTOP', 'YES'].includes(word)) {
+    users.forEach(n => { const st = db.users[n].settings; if (st.optedOut) { st.smsEnabled = true; st.optedOut = false; } });
+    await saveDb();
+    log('sms opt-in by reply for', users.join(', ') || 'unknown number');
+  } else if (['HELP', 'INFO'].includes(word) && users.length) {
+    const help = site.name + ' price alerts: texts when a price you watch drops. Msg & data rates may apply. Reply STOP to stop.' + (site.email ? ' Help: ' + site.email : '');
+    try { await sendSms(from, help); } catch (e) { log('help reply failed', e.message); }
+  }
+  return send(res, 200, { ok: true });
 }
 
 /* ---------------- alert checking ---------------- */
@@ -537,6 +599,9 @@ async function api(req, res, url) {
   const method = req.method;
   const p = url.pathname;
 
+  // Textbelt reply webhook: signed with the API key instead of a session (no cookie, no CSRF header)
+  if (p === '/api/sms/reply' && method === 'POST') return await textbeltReply(req, res);
+
   // CSRF: browsers can't add this header cross-site without CORS preflight (which we never grant)
   if (method !== 'GET' && req.headers['x-requested-with'] !== 'CruiseDeals') return send(res, 403, { error: 'Forbidden' });
 
@@ -650,6 +715,21 @@ async function api(req, res, url) {
       log('user created', b.username, 'by', me.name);
       return send(res, 200, { ok: true });
     }
+    if (p === '/api/admin/site' && method === 'GET') {
+      const st = siteInfo();
+      return send(res, 200, { name: st.name, owner: st.owner, email: st.email, url: st.url, replyUrl: st.url && /^https:/i.test(st.url) ? st.url + '/api/sms/reply' : '' });
+    }
+    if (p === '/api/admin/site' && method === 'PUT') {
+      const b = (await readJson(req, 4096)) || {};
+      const name = String(b.name || '').trim().slice(0, 60) || 'Cruise Deals';
+      const owner = String(b.owner || '').trim().slice(0, 80);
+      const email = String(b.email || '').trim().slice(0, 120);
+      if (email && !/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(email)) return send(res, 400, { error: 'That email address does not look right' });
+      db.config.site = { name, owner, email, updated: new Date().toISOString().slice(0, 10) };
+      await saveDb();
+      log('site info changed by', me.name);
+      return send(res, 200, { ok: true });
+    }
     if (p === '/api/admin/sms' && method === 'GET') {
       const c = smsConf();
       const values = {};
@@ -752,6 +832,10 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
     if (url.pathname.startsWith('/api/')) return await api(req, res, url);
+    if (PAGES[url.pathname] && (req.method === 'GET' || req.method === 'HEAD')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
+      return res.end(req.method === 'HEAD' ? undefined : PAGES[url.pathname](siteInfo()));
+    }
     return await serveStatic(req, res, url);
   } catch (e) {
     if (!res.headersSent) send(res, e.status || 500, { error: e.status ? e.message : 'Server error' });

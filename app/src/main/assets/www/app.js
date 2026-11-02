@@ -1216,6 +1216,8 @@
         h('label', { class: 'field' }, h('span', { text: 'Mobile number' }), phone),
         h('label', { class: 'toggle' }, h('span', { text: 'Text me price drops' }), sms),
         h('p', { class: 'small muted', text: when + ' You only get another text for the same item if its price falls below the price we last texted you.' }),
+        h('p', { class: 'small muted' }, 'By turning on texts you agree to receive automated price-drop alerts at this number. Msg & data rates may apply. Reply STOP to stop, HELP for help. ',
+          h('a', { href: '/sms-terms', target: '_blank', rel: 'noopener', text: 'SMS Terms' }), ' · ', h('a', { href: '/privacy', target: '_blank', rel: 'noopener', text: 'Privacy' })),
         msg,
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn', text: 'Save', onclick: function () {
@@ -1242,7 +1244,7 @@
             P.changePassword(oldP.value, newP.value).then(function () { oldP.value = newP.value = ''; toast('Password changed'); }).catch(function (e) { add(pmsg, errBox(e)); });
           } }),
           h('button', { class: 'btn danger', text: 'Sign out', onclick: function () { P.logout().then(showLogin, showLogin); } }))));
-      if (me.admin) { adminSms(box); adminUsers(box); }
+      if (me.admin) { adminSms(box); adminSite(box); adminUsers(box); }
     }).catch(function (e) { add(box, errBox(e)); });
   }
 
@@ -1341,6 +1343,33 @@
     }).catch(function (e) { add(card, errBox(e)); });
   }
 
+  /* public About / Terms / Privacy / SMS terms pages - what Textbelt reviews before allowing links */
+  function adminSite(box) {
+    var card = h('div', { class: 'card' });
+    add(box, card);
+    P.getSiteAdmin().then(function (c) {
+      var name = h('input', { value: c.name || '', maxlength: '60' });
+      var owner = h('input', { value: c.owner || '', maxlength: '80', placeholder: 'Your name' });
+      var email = h('input', { type: 'email', value: c.email || '', maxlength: '120', placeholder: 'you@example.com' });
+      var msg = h('div');
+      function page(path, label) { return h('a', { href: path, target: '_blank', rel: 'noopener', text: label }); }
+      add(card, [
+        h('b', { text: '\u{1F4C4} Public pages (admin)' }),
+        h('p', { class: 'small muted', text: 'Anyone can open these without signing in. Textbelt (and other providers) look at them before allowing links in texts. Fill in who runs the site and a contact email, then save.' }),
+        h('label', { class: 'field' }, h('span', { text: 'Site name' }), name),
+        h('label', { class: 'field' }, h('span', { text: 'Run by' }), owner),
+        h('label', { class: 'field' }, h('span', { text: 'Contact email' }), email),
+        h('p', { class: 'small' }, page('/about', 'About'), ' · ', page('/terms', 'Terms of Use'), ' · ', page('/privacy', 'Privacy Policy'), ' · ', page('/sms-terms', 'SMS Terms')),
+        h('p', { class: 'small muted', text: c.url ? 'Public address: ' + c.url + (c.replyUrl ? ' · STOP/HELP replies come back to ' + c.replyUrl : '') : 'Set "This site\'s address" in the provider card above (your https:// address) so the pages and STOP replies use it.' }),
+        msg,
+        h('button', { class: 'btn block', text: 'Save site details', onclick: function () {
+          clear(msg);
+          P.saveSiteAdmin({ name: name.value.trim(), owner: owner.value.trim(), email: email.value.trim() }).then(function () { toast('Saved'); }).catch(function (e) { add(msg, errBox(e)); });
+        } })
+      ]);
+    }).catch(function (e) { add(card, errBox(e)); });
+  }
+
   function adminUsers(box) {
     var listEl = h('div'), msg = h('div');
     var u = h('input', { autocomplete: 'off', placeholder: 'username' }), pw = h('input', { type: 'password', autocomplete: 'new-password', placeholder: 'temporary password (10+)' });
@@ -1386,6 +1415,8 @@
       P.login(u.value.trim(), pw.value).then(start).catch(function (err) { btn.disabled = false; add(msg, errBox(err)); });
     };
     add(v, form);
+    add(v, h('p', { class: 'small muted', style: 'text-align:center' }, h('a', { href: '/about', text: 'About' }), ' · ', h('a', { href: '/terms', text: 'Terms' }), ' · ',
+      h('a', { href: '/privacy', text: 'Privacy' }), ' · ', h('a', { href: '/sms-terms', text: 'SMS Terms' })));
     u.focus();
   }
 

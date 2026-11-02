@@ -84,6 +84,8 @@
       testSms: function () { return api('POST', '/api/me/test-sms'); },
       smsPreview: function () { return api('GET', '/api/sms/preview'); },
       getSmsAdmin: function () { return api('GET', '/api/admin/sms'); },
+      getSiteAdmin: function () { return api('GET', '/api/admin/site'); },
+      saveSiteAdmin: function (c) { return api('PUT', '/api/admin/site', c); },
       saveSmsAdmin: function (c) { return api('PUT', '/api/admin/sms', c); },
       testSmsAdmin: function (phone) { return api('POST', '/api/admin/sms/test', { phone: phone }); },
       changePassword: function (oldP, newP) { return api('POST', '/api/me/password', { oldPassword: oldP, newPassword: newP }); },
