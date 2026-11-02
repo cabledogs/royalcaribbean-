@@ -15,7 +15,21 @@ if (!pkg || !date || !rooms.length) { console.log('Usage: node tools/check-conne
 const roomList = rooms.map(r => { const [a, c] = r.split('+').map(Number); return { adults: a, children: c || 0 }; });
 (async () => {
   try {
-    const ro = await Core.getRoomOptions(upstream, { packageCode: pkg, sailDate: date, currency: 'USD', host: 'www.royalcaribbean.com', rooms: roomList });
+    const ro = await Core.getRoomOptions(upstream, { packageCode: pkg, sailDate: date, currency: 'USD', host: 'www.royalcaribbean.com', rooms: roomList, keepRaw: true });
+    // where in Royal's reply are categories, connecting flags and cabin pairs?
+    const where = {};
+    (function walk(o, p) {
+      if (!o || typeof o !== 'object') return;
+      if (Array.isArray(o)) { o.forEach((x, i) => walk(x, p + (p === '' || /rooms$/.test(p) ? '[' + i + ']' : '[]'))); return; }
+      if (typeof o.categoryCode === 'string') {
+        const w = where[p] = where[p] || { cats: 0, connectingTrue: 0, pairs: 0 };
+        w.cats++; if (o.connecting === true) w.connectingTrue++;
+        (o.cabins || []).forEach(c => { if (c && c.connectingCabin) w.pairs++; });
+      }
+      for (const k of Object.keys(o)) walk(o[k], p + '.' + k);
+    })(ro.raw, '');
+    console.log('Where Royal put the categories:');
+    for (const [p, w] of Object.entries(where)) console.log('  ' + p + '  categories=' + w.cats + ' connecting=' + w.connectingTrue + ' cabinPairs=' + w.pairs);
     console.log('Started from category ' + ro.start.subtype + ' (' + ro.start.typeCode + ')');
     ro.rooms.forEach((list, i) => {
       console.log('Room ' + (i + 1) + ' (' + rooms[i] + '): ' + list.length + ' categories, connecting: ' + list.filter(c => c.connecting).map(c => c.code + ' ' + c.name + ' $' + c.price).join(' | '));

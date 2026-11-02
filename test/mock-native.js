@@ -15,11 +15,15 @@
     var b = JSON.parse(body);
     function cat(code, alt, base, conn, n, pairs, avail) {
       var f = 1 + 0.35 * (n - 2), amt = Math.round(base * f * 100) / 100;
-      var cabins = conn && b.rooms.length > 1 ? pairs.map(function (p) { return { cabinNumber: p[0], positionCode: 'AF', connectingCabin: { cabinNumber: p[1], positionCode: 'AF' } }; }) : [];
-      return { pricing: { invoice: { total: amt }, amount: amt }, categoryCode: code, fareCode: 'CG1', connecting: conn && b.rooms.length > 1, image: { alt: alt }, stateroomsAvailable: avail === undefined ? 10 : avail, cabins: cabins };
+      // like the real reply: connecting markers and cabin pairs only on the first room's list
+      var marked = conn && b.rooms.length > 1 && roomIdx === 0;
+      var cabins = marked ? pairs.map(function (p) { return { cabinNumber: p[0], positionCode: 'AF', connectingCabin: { cabinNumber: p[1], positionCode: 'AF' } }; }) : (pairs || []).map(function (p) { return { cabinNumber: p[0], positionCode: 'AF' }; });
+      return { pricing: { invoice: { total: amt }, amount: amt }, categoryCode: code, fareCode: 'CG1', connecting: marked, image: { alt: alt }, stateroomsAvailable: avail === undefined ? 10 : avail, cabins: cabins };
     }
+    var roomIdx = -1;
     return { sailing: { sailDate: b.sailDate }, rooms: b.rooms.map(function (r) {
       var n = r.adultCount + r.childCount;
+      roomIdx++;
       return { request: r, room: { stateroomType: { name: 'Interior' }, categoryCode: 'ZQ', pricing: { invoice: { total: 1 } } },
         options: { stateroomTypes: [
           { name: 'Interior', summary: 'Our Interior rooms', connecting: true, categories: [cat('ZQ', 'Interior Quad Guarantee', 1300, false, n), cat('T5', 'Surfside Family Interior', 1490, true, n, [['8341', '8343'], ['8343', '8341'], ['8721', '8723']])] },
