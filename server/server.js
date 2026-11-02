@@ -570,14 +570,16 @@ function publicUser(name, rec) {
 function cleanAlerts(list, old) {
   if (!Array.isArray(list)) throw Object.assign(new Error('Alerts must be a list'), { status: 400 });
   if (list.length > CFG.maxAlertsPerUser) throw Object.assign(new Error('Too many alerts (max ' + CFG.maxAlertsPerUser + ')'), { status: 400 });
-  return list.filter(a => a && typeof a === 'object' && typeof a.id === 'string' && (a.type === 'product' || a.type === 'cabin')).map(a => {
+  return list.filter(a => a && typeof a === 'object' && typeof a.id === 'string' && (a.type === 'product' || a.type === 'cabin' || a.type === 'cruise')).map(a => {
     const out = {};
     for (const k of ['id', 'type', 'title', 'ship', 'shipName', 'sailDate', 'category', 'categoryName', 'day', 'port', 'productId', 'currency', 'unit',
       'initialPrice', 'target', 'lastPrice', 'lowestSeen', 'status', 'lastChecked', 'lastError', 'notifiedPrice', 'created',
-      'cabinName', 'packageCode', 'host', 'adults', 'children', 'loyaltyNumber', 'state', 'senior', 'military', 'police', 'fire']) {
+      'cabinName', 'packageCode', 'host', 'adults', 'children', 'split', 'kind', 'connecting', 'loyaltyNumber', 'state', 'senior', 'military', 'police', 'fire']) {
       if (a[k] !== undefined && (a[k] === null || ['string', 'number', 'boolean'].includes(typeof a[k]))) out[k] = typeof a[k] === 'string' ? a[k].slice(0, 300) : a[k];
     }
     if (out.host && !['www.royalcaribbean.com', 'www.celebritycruises.com'].includes(out.host)) out.host = 'www.royalcaribbean.com';
+    if (out.split !== undefined && !/^\d{1,2}\/\d{1,2}(,\d{1,2}\/\d{1,2}){0,3}$/.test(String(out.split))) delete out.split;
+    if (out.kind !== undefined && !['any', 'interior', 'ocean', 'balcony', 'suite', 'other'].includes(out.kind)) out.kind = 'any';
     if (out.loyaltyNumber !== undefined && !/^\d{4,15}$/.test(String(out.loyaltyNumber))) delete out.loyaltyNumber;
     if (out.state !== undefined && !/^[A-Z]{2}$/.test(String(out.state))) delete out.state;
     // a target has to be below today's price (an unchanged older target is left alone)

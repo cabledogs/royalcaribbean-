@@ -188,6 +188,16 @@ async function call(method, p, body, who = 'a', extra = {}) {
     assert((await reply('Stop please')).status === 200 && (await call('GET', '/api/me', undefined, 'b')).json.settings.smsEnabled === false, 'STOP reply turns texts off');
     assert((await reply('START')).status === 200 && (await call('GET', '/api/me', undefined, 'b')).json.settings.smsEnabled === true, 'START reply turns them back on');
 
+    // whole-cruise alerts: rooms booked together (rooms service) and one cabin (cabin page)
+    const cruise = (split, kind, conn, initial) => ({ id: 'cruise|' + split + kind, type: 'cruise', title: 'Cruise test ' + split, ship: 'WN', shipName: 'Wonder of the Seas',
+      sailDate: '20270110', packageCode: 'WNW123', host: 'www.royalcaribbean.com', currency: 'USD', split, kind, connecting: conn, initialPrice: initial, evil: 1 });
+    const saved = await call('PUT', '/api/alerts', [cruise('2/1,2/1', 'interior', true, 3000), cruise('2/0', 'any', false, 5000), Object.assign(cruise('9/9/9', 'nonsense', false, 1), { id: 'bad' })]);
+    assert(saved.status === 200 && saved.json[2].split === undefined && saved.json[2].kind === 'any', 'cruise alert fields checked (bad split/kind dropped)');
+    const cc = (await call('POST', '/api/alerts/check')).json;
+    assert(cc[0].lastPrice === 2823.38 && cc[0].status === 'dropped', 'group cruise alert priced from the rooms service: ' + cc[0].lastPrice + ' ' + (cc[0].lastError || ''));
+    assert(typeof cc[1].lastPrice === 'number' && cc[1].lastPrice < 5000 && cc[1].status === 'dropped', 'one-cabin cruise alert priced: ' + cc[1].lastPrice + ' ' + (cc[1].lastError || ''));
+    await call('PUT', '/api/alerts', []);
+
     let blocked = false;
     for (let i = 0; i < 12; i++) if ((await call('POST', '/api/login', { username: 'firstmate', password: 'guess' + i }, 'x')).status === 429) blocked = true;
     assert(blocked, 'login brute force rate-limited');
