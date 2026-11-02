@@ -54,6 +54,19 @@ const path = require('path');
   await page.waitForSelector('text=Open connecting pairs:');
   await page.waitForSelector('text=Balcony, Suite: no connecting rooms open for this group.');
   await shot('6b-group-cabins');
+  // bell on a group result = whole-cruise alert for those rooms
+  await page.click('button[aria-label="Price alert for Inside rooms"]');
+  await page.waitForSelector('#sheet >> text=Cruise: 2 connecting Inside rooms');
+  await page.click('#sheet >> text=Create alert');
+  // "Watch this cruise" in the sailing header
+  await page.click('text=🔔 Watch this cruise');
+  await page.waitForSelector('text=Cheapest cabin of any type');
+  await shot('6c-watch-cruise');
+  await page.click('button[aria-label="Price alert for cheapest Balcony"]');
+  await page.waitForSelector('#sheet >> text=Cruise: cheapest Balcony');
+  await page.click('#sheet >> text=Create alert');
+  const kinds = await page.evaluate(() => JSON.parse(window.Native.getAlerts()).filter(a => a.type === 'cruise').map(a => a.split + ' ' + a.kind + ' ' + a.connecting));
+  if (kinds.length !== 2 || !kinds.some(k => /^2\/1,2\/1 interior true$/.test(k)) || !kinds.some(k => /balcony false$/.test(k))) throw new Error('cruise alerts not saved right: ' + kinds.join('; '));
   await page.click('[data-root=alerts]'); await page.waitForSelector('text=Mayan Ruins Tour');
   await page.click('text=Check prices now'); await page.waitForSelector('text=Price dropped');
   await shot('7-alerts');

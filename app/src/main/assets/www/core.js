@@ -598,6 +598,51 @@
    *       | {type:'cabin', packageCode, sailDate, host, adults, children, cabinName, currency, target, ...}
    * Returns {alert (updated copy), message|null}. `message` is set when the user should be told.
    */
+  /*
+   * A whole-cruise alert: the cheapest price on one sailing for a cabin type ('any' = any type).
+   *   split: "2/0" (one cabin) or "2/1,2/1" (rooms booked together, same room type), connecting: true/false
+   * One cabin uses the cabin page; several rooms use the rooms service, priced per room size.
+   */
+  function parseSplit(s) {
+    return String(s || '').split(',').map(function (x) {
+      var p = x.split('/');
+      return { adults: parseInt(p[0], 10) || 0, children: parseInt(p[1], 10) || 0 };
+    }).filter(function (r) { return r.adults > 0; });
+  }
+  function splitText(rooms) { return rooms.map(function (r) { return r.adults + '/' + r.children; }).join(','); }
+
+  async function cruisePrice(http, a) {
+    var rooms = parseSplit(a.split);
+    if (!rooms.length) throw new Error('Alert has no guests');
+    var want = a.kind || 'any';
+    var base = { packageCode: a.packageCode, sailDate: a.sailDate, currency: a.currency, host: a.host };
+    ['loyaltyNumber', 'state', 'senior', 'military', 'police', 'fire'].forEach(function (k) { if (a[k]) base[k] = a[k]; });
+    var best = null;
+    if (rooms.length === 1) {
+      var rows = await getCabins(http, Object.assign({}, base, { adults: rooms[0].adults, children: rooms[0].children }));
+      rows.forEach(function (r) {
+        if (r.price === null || r.price === undefined) return;
+        if (want !== 'any' && cabinTypeOf(r.name) !== want) return;
+        if (best === null || r.price < best) best = r.price;
+      });
+      return best;
+    }
+    var first = await getRoomOptions(http, Object.assign({}, base, { rooms: rooms }));
+    var byOcc = {};
+    byOcc[rooms[0].adults + '/' + rooms[0].children] = first;
+    for (var i = 1; i < rooms.length; i++) {
+      var key = rooms[i].adults + '/' + rooms[i].children;
+      if (byOcc[key]) continue;
+      var order = [rooms[i]].concat(rooms.filter(function (x, j) { return j !== i; }));
+      byOcc[key] = await getRoomOptions(http, Object.assign({}, base, { rooms: order }));
+    }
+    combineSplit(rooms, first, byOcc, !!a.connecting).forEach(function (b) {
+      if (want !== 'any' && b.kind !== want) return;
+      if (best === null || b.total < best) best = b.total;
+    });
+    return best;
+  }
+
   async function checkAlert(http, alert) {
     var a = JSON.parse(JSON.stringify(alert));
     var now = new Date().toISOString();
@@ -606,6 +651,8 @@
       if (a.type === 'cabin') {
         var cabins = await getCabins(http, a);
         cabins.forEach(function (c) { if (c.name === a.cabinName) current = c.price; });
+      } else if (a.type === 'cruise') {
+        current = await cruisePrice(http, a);
       } else {
         var items = await getProducts(http, a.ship, a.sailDate, a.category, a.currency, a.day);
         items.forEach(function (p) { if (String(p.id) === String(a.productId)) current = p.price; });
@@ -822,7 +869,7 @@
     ALLOWED_HOSTS: ALLOWED_HOSTS,
     getShips: getShips, getSailings: getSailings, getItinerary: getItinerary,
     getCategories: getCategories, getProducts: getProducts, getCabins: getCabins,
-    parseCabins: parseCabins, getRoomOptions: getRoomOptions, parseRoomOptions: parseRoomOptions, bestByKind: bestByKind, combineSplit: combineSplit,
+    parseCabins: parseCabins, getRoomOptions: getRoomOptions, cruisePrice: cruisePrice, parseSplit: parseSplit, splitText: splitText, parseRoomOptions: parseRoomOptions, bestByKind: bestByKind, combineSplit: combineSplit,
     cabinTypeOf: cabinTypeOf, CABIN_KIND_NAMES: CABIN_KIND_NAMES, planSplits: planSplits, occupanciesFor: occupanciesFor, bestCombos: bestCombos, cabinUrl: cabinUrl, CABIN_HEADERS: CABIN_HEADERS, extractJsonArray: extractJsonArray,
     checkAlert: checkAlert, login: login, checkPurchases: checkPurchases, getProfile: getProfile, discountOpts: discountOpts, discountLabels: discountLabels,
     classifyCategory: classifyCategory, parsePrice: parsePrice, productPrice: productPrice,
