@@ -1054,8 +1054,8 @@
     var card = h('div', { class: 'card' });
     function draw() {
       clear(card);
-      var how = P.kind === 'web' ? 'Checked every 20 minutes and texted right away (not held for the daily text), because sales like the 2024 gift card flash sale can end within hours.'
-        : 'Checked about every 30 minutes while one of these is on, because sales can end within hours. Your phone shows a notification.';
+      var how = P.kind === 'web' ? 'Checked every 3 hours (gently, to stay clear of the cruise line\'s bot protection) and texted right away, not held for the daily text.'
+        : 'Checked every 3 hours while one of these is on (gently, to stay clear of the cruise line\'s bot protection). Your phone shows a notification.';
       add(card, [h('b', { text: '\u2728 Royal specials' }), h('p', { class: 'small muted', text: 'Get alerted when Royal Caribbean posts new wording about these on its deals pages. ' + how })]);
       Object.keys(Core.SPECIALS).forEach(function (key) {
         var id = 'special|' + key;

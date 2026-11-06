@@ -57,7 +57,7 @@ final class Alerts {
         if (!enabled) return;
         JobInfo job = new JobInfo.Builder(JOB_ID, new ComponentName(c, AlertJobService.class))
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-            .setPeriodic(prefs(c).getBoolean("hasSpecials", false) ? 30 * 60_000L : Math.max(1, hours) * 3600L * 1000L)
+            .setPeriodic(Math.max(1, prefs(c).getBoolean("hasSpecials", false) ? Math.min(hours, 3) : hours) * 3600L * 1000L)
             .setPersisted(true)
             .build();
         js.schedule(job);
@@ -78,7 +78,7 @@ final class Alerts {
     static JSONArray checkAll(Context c) { return checkAll(c, true); }
 
     /**
-     * all = false (the background job): specials every run (it runs every 30 minutes while a specials
+     * all = false (the background job): specials every run (at least every 3 hours while a specials
      * watch exists, because sales can last only hours); price alerts only when their own interval is up.
      */
     static JSONArray checkAll(Context c, boolean all) {
