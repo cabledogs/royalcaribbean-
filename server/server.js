@@ -532,7 +532,7 @@ async function digestTick(now) {
 }
 
 /* Royal specials: their own, faster schedule (only the special alerts, shared page fetches) */
-const SPECIALS_MINUTES = Math.max(5, parseFloat(env.SPECIALS_CHECK_MINUTES || '20'));
+const SPECIALS_MINUTES = Math.max(60, parseFloat(env.SPECIALS_CHECK_MINUTES || '180'));
 let checkingSpecials = false;
 async function specialsCheck() {
   if (checkingSpecials) return;
