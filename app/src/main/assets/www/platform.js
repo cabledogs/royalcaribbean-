@@ -65,7 +65,14 @@
     }
     return {
       kind: 'web',
-      features: { background: 'server', sms: true, accounts: true, rememberPassword: false },
+      features: { background: 'server', sms: true, accounts: true, rememberPassword: 'server' },
+      // saved cruise-line login: encrypted on the server; the browser never gets the password back
+      savedLogin: {
+        get: function () { return api('GET', '/api/me/cruise-login'); },
+        signIn: function () { return api('POST', '/api/me/cruise-login/session'); },
+        remember: function (line, user, pass) { return api('PUT', '/api/me/cruise-login', { line: line, user: user, pass: pass }); },
+        forget: function () { return api('DELETE', '/api/me/cruise-login'); }
+      },
       api: api,
       http: function (method, url, o) {
         o = o || {};

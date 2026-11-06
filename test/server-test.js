@@ -198,6 +198,41 @@ async function call(method, p, body, who = 'a', extra = {}) {
     assert(typeof cc[1].lastPrice === 'number' && cc[1].lastPrice < 5000 && cc[1].status === 'dropped', 'one-cabin cruise alert priced: ' + cc[1].lastPrice + ' ' + (cc[1].lastError || ''));
     await call('PUT', '/api/alerts', []);
 
+    // Royal specials: texted right away even in daily mode, and only once per sentence
+    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} }, mode: 'daily', hour: 23, tz: 'UTC' });
+    await call('PUT', '/api/me/settings', { phone: '+15551234567', smsEnabled: true }, 'b');
+    const sp = await call('PUT', '/api/alerts', [{ id: 'special|giftcards', type: 'special', special: 'giftcards', title: 'Royal gift card deals', urls: 'https://evil.example.com/' },
+      { id: 'special|custom|x', type: 'special', special: 'custom', title: 'kids', urls: 'https://evil.example.com/|https://www.royalcaribbean.com/cruise-deals', keywords: 'kids sail free' }], 'b');
+    assert(sp.json[0].urls === undefined && sp.json[1].urls === 'https://www.royalcaribbean.com/cruise-deals', 'special alerts saved; non cruise-line pages dropped');
+    const t0 = texts.length;
+    await call('POST', '/api/alerts/check', undefined, 'b');
+    assert(texts.length === t0, 'no text while no special is posted');
+    fs.writeFileSync(path.join(data, 'mock-special'), '<p>Today only: get 10% off gift card purchases of $350 or more. Crown &amp; Anchor members save an extra 10%.</p>');
+    const spc = (await call('POST', '/api/alerts/check', undefined, 'b')).json;
+    assert(spc[0].status === 'found' && /10% off gift card/.test(spc[0].found), 'gift card sale spotted: ' + spc[0].found);
+    assert(texts.length === t0 + 1 && /Royal special spotted/.test(texts[t0].message) && /10% off gift card purchases of \$350/.test(texts[t0].message), 'texted right away, not held for the daily text: ' + JSON.stringify(texts[t0] && texts[t0].message));
+    await call('POST', '/api/alerts/check', undefined, 'b');
+    assert(texts.length === t0 + 1, 'same special is not texted twice');
+    await call('PUT', '/api/alerts', [], 'b');
+    await call('PUT', '/api/admin/sms', { provider: 'textbelt', values: { textbelt: {} }, mode: 'each' });
+    texts.length = t0;
+
+    // remembered cruise-line login: encrypted on the server, never sent back
+    assert((await call('POST', '/api/me/cruise-login/session', undefined, 'b')).status === 404, 'no saved login yet');
+    const rem = await call('PUT', '/api/me/cruise-login', { line: 'royalcaribbean', user: 'me@example.com', pass: 'right-password' }, 'b');
+    assert(rem.status === 200 && !JSON.stringify(rem.json).includes('right-password'), 'login saved; password not echoed');
+    const got = await call('GET', '/api/me/cruise-login', undefined, 'b');
+    assert(got.json.remembered === true && got.json.user === 'me@example.com' && got.json.pass === undefined, 'saved login listed without the password');
+    await new Promise(r => setTimeout(r, 300));
+    const dbText = fs.readFileSync(path.join(data, 'db.json'), 'utf8');
+    assert(!dbText.includes('right-password') && dbText.includes('"cruiseLogin"'), 'password encrypted in the database');
+    assert((fs.statSync(path.join(data, 'cruise-login.key')).mode & 0o077) === 0, 'encryption key file readable by the owner only');
+    const sess = await call('POST', '/api/me/cruise-login/session', undefined, 'b');
+    assert(sess.status === 200 && sess.json.accountId === 'acct42' && sess.json.token, 'server signs in with the saved login');
+    assert((await call('POST', '/api/me/cruise-login/session')).status === 404, 'saved logins are per user');
+    await call('DELETE', '/api/me/cruise-login', undefined, 'b');
+    assert((await call('GET', '/api/me/cruise-login', undefined, 'b')).json.remembered === false, 'Forget removes the saved login');
+
     let blocked = false;
     for (let i = 0; i < 12; i++) if ((await call('POST', '/api/login', { username: 'firstmate', password: 'guess' + i }, 'x')).status === 429) blocked = true;
     assert(blocked, 'login brute force rate-limited');

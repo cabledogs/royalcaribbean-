@@ -83,7 +83,7 @@ function terms(site) {
 <h2>5. Acceptable use</h2>
 <p>Do not misuse the Service, try to access other members' accounts, overload it, or use it for anything unlawful. The Operator may suspend or delete accounts at any time.</p>
 <h2>6. Your cruise-line login</h2>
-<p>If you use "My Cruises", your cruise-line email and password are passed straight to the cruise line to look up your bookings. The Service does not store them.</p>
+<p>If you use "My Cruises", your cruise-line email and password are passed to the cruise line to look up your bookings. They are only stored if you tick "Remember" (the password encrypted), and you can delete them at any time with "Forget my saved login".</p>
 <h2>7. Limitation of liability</h2>
 <p>To the fullest extent allowed by law, the Operator is not liable for any loss arising from use of the Service, including prices that were missed, wrong or changed.</p>
 <h2>8. Not affiliated</h2>
@@ -102,10 +102,11 @@ function privacy(site) {
 <li><b>Account:</b> your username and a one-way hash of your password (the password itself is never stored).</li>
 <li><b>Mobile number</b>, only if you enter it to receive text alerts, and whether texts are switched on.</li>
 <li><b>Your price alerts</b> (which items you watch, prices seen) and optional discount details you enter, such as a loyalty number or state of residence, used only to look up prices for you.</li>
+<li><b>Your cruise-line login</b>, only if you tick "Remember" in My Cruises: your email and an encrypted copy of your password, used only to sign in to the cruise line for you. "Forget my saved login" deletes it.</li>
 <li><b>Sign-in sessions</b> (a random cookie) and short server logs (time, sign-ins, errors) for security.</li>
 </ul>
 <h2>What we do not keep</h2>
-<p>Cruise-line passwords used in "My Cruises" are passed to the cruise line and not stored. There is no advertising, analytics or tracking.</p>
+<p>Cruise-line passwords used in "My Cruises" are passed to the cruise line and not stored unless you tick "Remember" (then encrypted, see above). There is no advertising, analytics or tracking.</p>
 <h2>How your mobile number is used</h2>
 <p>Only to send you the price-drop texts you asked for. It is sent to the text-message provider (for example Textbelt) solely to deliver those texts. <b>Mobile numbers and opt-in consent are never sold, rented or shared with anyone for marketing.</b></p>
 <h2>Sharing</h2>

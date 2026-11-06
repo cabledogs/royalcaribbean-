@@ -109,6 +109,11 @@ function formatDrops(drops, opts) {
   opts = opts || {};
   const link = opts.link ? '\n' + opts.link.replace(/\/+$/, '') + '/' : '';
   if (!drops.length) return '';
+  // Royal specials: the sentence found on the cruise line's page
+  if (drops.every(d => d.type === 'special')) {
+    if (drops.length === 1) return ('Cruise Deals: Royal special spotted!\n' + drops[0].title + '\n"' + drops[0].snippet + '"' + (drops[0].more ? '\n(+' + drops[0].more + ' more)' : '')).slice(0, 600) + link;
+    return ('Cruise Deals: ' + drops.length + ' Royal specials spotted\n' + drops.map(d => '- ' + d.title + ': "' + d.snippet + '"').join('\n')).slice(0, 600) + link;
+  }
   if (drops.length === 1) {
     const d = drops[0];
     return 'Cruise Deals: price drop!\n' +

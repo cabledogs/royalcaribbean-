@@ -42,6 +42,34 @@ const CFG = {
 };
 const DB_FILE = path.join(CFG.dataDir, 'db.json');
 
+/*
+ * Saved cruise-line logins (only when a user ticks "Remember"): the password is encrypted with
+ * AES-256-GCM using a random key kept in its own file next to the database (mode 600), and is never
+ * sent back to a browser - the server signs in to the cruise line and returns just the session.
+ */
+let loginKey = null;
+function cruiseKey() {
+  if (loginKey) return loginKey;
+  const f = path.join(CFG.dataDir, 'cruise-login.key');
+  try { loginKey = Buffer.from(fs.readFileSync(f, 'utf8').trim(), 'base64'); } catch (e) { /* create below */ }
+  if (!loginKey || loginKey.length !== 32) {
+    loginKey = crypto.randomBytes(32);
+    fs.writeFileSync(f, loginKey.toString('base64'), { mode: 0o600 });
+  }
+  return loginKey;
+}
+function sealPassword(pw) {
+  const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', cruiseKey(), iv);
+  const data = Buffer.concat([c.update(String(pw), 'utf8'), c.final()]);
+  return { iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), data: data.toString('base64') };
+}
+function openPassword(box) {
+  const d = crypto.createDecipheriv('aes-256-gcm', cruiseKey(), Buffer.from(box.iv, 'base64'));
+  d.setAuthTag(Buffer.from(box.tag, 'base64'));
+  return Buffer.concat([d.update(Buffer.from(box.data, 'base64')), d.final()]).toString('utf8');
+}
+const CRUISE_LINES = ['royalcaribbean', 'celebritycruises'];
+
 function log(...a) { console.log(new Date().toISOString(), ...a); }
 
 /* ---------------- storage (single JSON file, atomic writes) ---------------- */
@@ -388,12 +416,13 @@ function cachedHttp() {
   };
 }
 
-async function checkUserAlerts(name, httpFn) {
+async function checkUserAlerts(name, httpFn, only) {
   const rec = db.users[name];
   if (!rec || !rec.alerts || !rec.alerts.length) return { messages: [], drops: [] };
   const messages = [], drops = [];
   const results = [];
   for (const a of rec.alerts) {
+    if (only && !only(a)) continue;
     try {
       const r = await Core.checkAlert(httpFn, a);
       results.push(r.alert);
@@ -445,6 +474,12 @@ async function textUser(name, drops) {
 async function notifyUser(name, drops) {
   const rec = db.users[name];
   if (!rec || !rec.settings || !rec.settings.smsEnabled || !rec.settings.phone) return;
+  // Royal specials (flash sales can end within hours) are texted right away, never held for the daily text
+  const specials = drops.filter(d => d.type === 'special');
+  drops = drops.filter(d => d.type !== 'special');
+  if (specials.length) {
+    try { await textUser(name, specials); } catch (e) { log('sms failed for', name, e.message); }
+  }
   if (drops.length) {
     const pending = rec.pendingDrops || [];
     for (const d of drops) {
@@ -494,6 +529,24 @@ async function digestTick(now) {
     }
   } catch (e) { log('digest error', e.message); }
   finally { digesting = false; }
+}
+
+/* Royal specials: their own, faster schedule (only the special alerts, shared page fetches) */
+const SPECIALS_MINUTES = Math.max(5, parseFloat(env.SPECIALS_CHECK_MINUTES || '20'));
+let checkingSpecials = false;
+async function specialsCheck() {
+  if (checkingSpecials) return;
+  const anyone = Object.values(db.users).some(u => (u.alerts || []).some(a => a.type === 'special'));
+  if (!anyone) return;
+  checkingSpecials = true;
+  try {
+    const httpFn = cachedHttp();
+    for (const name of Object.keys(db.users)) {
+      const { drops } = await checkUserAlerts(name, httpFn, a => a.type === 'special');
+      await notifyUser(name, drops);
+    }
+  } catch (e) { log('specials check error', e.message); }
+  finally { checkingSpecials = false; }
 }
 
 let checking = false;
@@ -570,16 +623,25 @@ function publicUser(name, rec) {
 function cleanAlerts(list, old) {
   if (!Array.isArray(list)) throw Object.assign(new Error('Alerts must be a list'), { status: 400 });
   if (list.length > CFG.maxAlertsPerUser) throw Object.assign(new Error('Too many alerts (max ' + CFG.maxAlertsPerUser + ')'), { status: 400 });
-  return list.filter(a => a && typeof a === 'object' && typeof a.id === 'string' && (a.type === 'product' || a.type === 'cabin' || a.type === 'cruise')).map(a => {
+  return list.filter(a => a && typeof a === 'object' && typeof a.id === 'string' && (a.type === 'product' || a.type === 'cabin' || a.type === 'cruise' || a.type === 'special')).map(a => {
     const out = {};
     for (const k of ['id', 'type', 'title', 'ship', 'shipName', 'sailDate', 'category', 'categoryName', 'day', 'port', 'productId', 'currency', 'unit',
       'initialPrice', 'target', 'lastPrice', 'lowestSeen', 'status', 'lastChecked', 'lastError', 'notifiedPrice', 'created',
-      'cabinName', 'packageCode', 'host', 'adults', 'children', 'split', 'kind', 'connecting', 'loyaltyNumber', 'state', 'senior', 'military', 'police', 'fire']) {
+      'cabinName', 'packageCode', 'host', 'adults', 'children', 'split', 'kind', 'connecting', 'special', 'urls', 'keywords', 'seen', 'found', 'foundCount', 'loyaltyNumber', 'state', 'senior', 'military', 'police', 'fire']) {
       if (a[k] !== undefined && (a[k] === null || ['string', 'number', 'boolean'].includes(typeof a[k]))) out[k] = typeof a[k] === 'string' ? a[k].slice(0, 300) : a[k];
     }
     if (out.host && !['www.royalcaribbean.com', 'www.celebritycruises.com'].includes(out.host)) out.host = 'www.royalcaribbean.com';
     if (out.split !== undefined && !/^\d{1,2}\/\d{1,2}(,\d{1,2}\/\d{1,2}){0,3}$/.test(String(out.split))) delete out.split;
     if (out.kind !== undefined && !['any', 'interior', 'ocean', 'balcony', 'suite', 'other'].includes(out.kind)) out.kind = 'any';
+    if (out.type === 'special') {
+      // presets use the server's own pages and pattern; custom = plain words on cruise-line pages only
+      if (!['points', 'giftcards', 'custom'].includes(out.special)) out.special = 'custom';
+      if (out.special !== 'custom') { delete out.urls; delete out.keywords; }
+      else {
+        out.urls = String(out.urls || '').split('|').filter(Core.specialUrlOk).slice(0, 3).join('|');
+        out.keywords = String(out.keywords || '').slice(0, 300);
+      }
+    }
     if (out.loyaltyNumber !== undefined && !/^\d{4,15}$/.test(String(out.loyaltyNumber))) delete out.loyaltyNumber;
     if (out.state !== undefined && !/^[A-Z]{2}$/.test(String(out.state))) delete out.state;
     // a target has to be below today's price (an unchanged older target is left alone)
@@ -648,6 +710,33 @@ async function api(req, res, url) {
       const r = await sendSms(phone, SMS.testMessage(smsFormatOpts()));
       return send(res, 200, { ok: true, info: r.info, quotaRemaining: r.quotaRemaining });
     } catch (e) { return send(res, 424, { error: e.message }); }
+  }
+  if (p === '/api/me/cruise-login' && method === 'GET') {
+    const cl = me.rec.cruiseLogin;
+    return send(res, 200, cl ? { line: cl.line, user: cl.user, remembered: true } : { remembered: false });
+  }
+  if (p === '/api/me/cruise-login' && method === 'PUT') {
+    const b = (await readJson(req, 4096)) || {};
+    const line = String(b.line || ''), user = String(b.user || '').trim(), pass = String(b.pass || '');
+    if (!CRUISE_LINES.includes(line) || !user || user.length > 200 || !pass || pass.length > 200) return send(res, 400, { error: 'Missing cruise line, email or password' });
+    me.rec.cruiseLogin = { line, user, pw: sealPassword(pass), saved: new Date().toISOString() };
+    await saveDb();
+    log('cruise-line login saved for', me.name);
+    return send(res, 200, { line, user, remembered: true });
+  }
+  if (p === '/api/me/cruise-login' && method === 'DELETE') {
+    delete me.rec.cruiseLogin;
+    await saveDb();
+    return send(res, 200, { remembered: false });
+  }
+  if (p === '/api/me/cruise-login/session' && method === 'POST') {
+    const cl = me.rec.cruiseLogin;
+    if (!cl) return send(res, 404, { error: 'No saved login' });
+    if (limited('cruise-login:' + me.name, 20, 60 * 60e3)) return send(res, 429, { error: 'Too many sign-ins - try again later' });
+    let pass;
+    try { pass = openPassword(cl.pw); } catch (e) { return send(res, 409, { error: 'The saved login could not be read - please sign in again' }); }
+    try { return send(res, 200, await Core.login(upstreamHttp, cl.user, pass, cl.line)); }
+    catch (e) { return send(res, 424, { error: e.message }); }
   }
   if (p === '/api/me/password' && method === 'POST') {
     const b = (await readJson(req, 4096)) || {};
@@ -866,6 +955,7 @@ if (require.main === module) {
   pruneSessions();
   setInterval(pruneSessions, 3600e3).unref();
   setInterval(scheduledCheck, CFG.checkHours * 3600e3);
+  setInterval(specialsCheck, SPECIALS_MINUTES * 60e3).unref();
   setInterval(() => digestTick(), parseInt(env.DIGEST_EVERY_MS || '', 10) || 5 * 60e3).unref();
   setTimeout(scheduledCheck, 60e3).unref();
   server.listen(CFG.port, () => log('Cruise Deals listening on :' + CFG.port + ' (alerts every ' + CFG.checkHours + 'h, texts via ' + (smsReady() ? smsConf().provider : 'nobody yet') + ')'));
@@ -874,4 +964,4 @@ if (require.main === module) {
   process.on('SIGINT', stop);
 }
 
-module.exports = { server, hashPassword, verifyPassword, planCheck: scheduledCheck, upstream, digestTick };
+module.exports = { server, hashPassword, verifyPassword, planCheck: scheduledCheck, upstream, digestTick, specialsCheck };

@@ -29,6 +29,17 @@ module.exports = async function (method, url, o) {
     const conn = { name: 'Interior Connecting', roomsLeft: 4, pricing: { invoice: { total: 1650 } } };
     return { status: 200, body: '0:["$","x",{"rooms":[{"options":{"stateroomTypes":[{"name":"Interior","stateroomSubtypes":[{"code":"T5","name":"Interior","pricing":{"invoice":{"total":1499.5}}},' + JSON.stringify(conn) + ']},{"name":"Balcony","stateroomSubtypes":[{"name":"Balcony","roomsLeft":0,"pricing":{"invoice":{"total":2000}}},{"name":"Balcony Plus","pricing":{"invoice":{"total":2399}}}]}]}}]}]' };
   }
+  // cruise-line sign-in (password "right-password" works)
+  if (url.includes('/auth/oauth2/access_token')) {
+    if (!/password=right-password/.test(o.body || '')) return { status: 401, body: '{}' };
+    return json({ access_token: 'x.' + Buffer.from(JSON.stringify({ sub: 'acct42' })).toString('base64url') + '.y' });
+  }
+  // public deals pages for the specials watcher; the test writes the sale text into a file
+  if (/^https:\/\/www\.royalcaribbean\.com\/(gift-cards|cruise-deals|crown-and-anchor-society)$/.test(url)) {
+    let extra = '';
+    if (process.env.MOCK_PRICE_FILE) { try { extra = require('fs').readFileSync(process.env.MOCK_PRICE_FILE.replace(/mock-price$/, 'mock-special'), 'utf8'); } catch (e) { /* none */ } }
+    return { status: 200, body: '<html><body><h1>Deals</h1><p>Save on your next cruise.</p>' + extra + '</body></html>' };
+  }
   return { status: 404, body: '' };
 };
 module.exports.setPrice = p => { price = p; };
