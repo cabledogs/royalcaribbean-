@@ -11,7 +11,7 @@ public class AlertJobService extends JobService {
             @Override
             public void run() {
                 try {
-                    Alerts.checkAll(getApplicationContext());
+                    Alerts.checkAll(getApplicationContext(), false);
                 } finally {
                     jobFinished(params, false);
                 }

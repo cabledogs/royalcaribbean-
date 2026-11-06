@@ -40,6 +40,12 @@ final class Alerts {
 
     static void save(Context c, String json) {
         synchronized (LOCK) { prefs(c).edit().putString("alerts", json).apply(); }
+        // a specials watch needs the faster schedule (and goes back to normal without one)
+        boolean had = prefs(c).getBoolean("hasSpecials", false), has = json.contains("\"type\":\"special\"");
+        if (had != has) {
+            prefs(c).edit().putBoolean("hasSpecials", has).apply();
+            if (prefs(c).getBoolean("bg", false)) schedule(c, true, prefs(c).getInt("bgHours", 12));
+        }
     }
 
     /* ---------- scheduling ---------- */
@@ -51,7 +57,7 @@ final class Alerts {
         if (!enabled) return;
         JobInfo job = new JobInfo.Builder(JOB_ID, new ComponentName(c, AlertJobService.class))
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-            .setPeriodic(Math.max(1, hours) * 3600L * 1000L)
+            .setPeriodic(prefs(c).getBoolean("hasSpecials", false) ? 30 * 60_000L : Math.max(1, hours) * 3600L * 1000L)
             .setPersisted(true)
             .build();
         js.schedule(job);
@@ -69,27 +75,40 @@ final class Alerts {
     /* ---------- the check (mirrors CruiseCore.checkAlert) ---------- */
 
     /** Checks every alert, notifies on drops, saves and returns the updated list. */
-    static JSONArray checkAll(Context c) {
+    static JSONArray checkAll(Context c) { return checkAll(c, true); }
+
+    /**
+     * all = false (the background job): specials every run (it runs every 30 minutes while a specials
+     * watch exists, because sales can last only hours); price alerts only when their own interval is up.
+     */
+    static JSONArray checkAll(Context c, boolean all) {
         JSONArray list;
         try { list = new JSONArray(load(c)); } catch (Exception e) { list = new JSONArray(); }
         String now = iso(new Date());
-        int drops = 0;
-        StringBuilder msgs = new StringBuilder();
+        long hoursMs = Math.max(1, prefs(c).getInt("bgHours", 12)) * 3600_000L;
+        boolean pricesDue = all || System.currentTimeMillis() - prefs(c).getLong("lastPriceCheck", 0) >= hoursMs - 10 * 60_000L;
+        if (pricesDue) prefs(c).edit().putLong("lastPriceCheck", System.currentTimeMillis()).apply();
+        int drops = 0, specials = 0;
+        StringBuilder msgs = new StringBuilder(), specialMsgs = new StringBuilder();
         for (int i = 0; i < list.length(); i++) {
             JSONObject a = list.optJSONObject(i);
             if (a == null) continue;
+            boolean special = "special".equals(a.optString("type"));
+            if (!special && !pricesDue) continue;
             try {
-                String msg = checkOne(a, now);
+                String msg = special ? CruiseSpecial.check(a, now) : checkOne(a, now);
                 if (msg != null) {
-                    drops++;
-                    if (msgs.length() > 0) msgs.append('\n');
-                    msgs.append(msg);
+                    StringBuilder into = special ? specialMsgs : msgs;
+                    if (special) specials++; else drops++;
+                    if (into.length() > 0) into.append('\n');
+                    into.append(msg);
                 }
             } catch (Exception ignored) { /* keep checking the rest */ }
         }
         // one notification for the whole check, not one per alert
         if (drops == 1) notify(c, 1000, "Price drop", msgs.toString());
         else if (drops > 1) notify(c, 1000, drops + " price drops", msgs.toString());
+        if (specials > 0) notify(c, 1001, specials == 1 ? "Royal special spotted" : specials + " Royal specials spotted", specialMsgs.toString());
         // merge back: keep alerts the user added/removed while we were checking
         synchronized (LOCK) {
             try {

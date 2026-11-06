@@ -643,9 +643,110 @@
     return best;
   }
 
+  /*
+   * Royal specials (bonus Crown & Anchor points, gift card deals...): the cruise lines publish these on
+   * ordinary web pages, not in an API. A "special" alert reads those pages and alerts when NEW wording
+   * that matches appears (each sentence is remembered, so the same offer is not sent twice).
+   * Presets carry their own pages and pattern; "custom" watches the user's own page for plain words
+   * (never a user-written regular expression).
+   */
+  var SPECIALS = {
+    points: {
+      title: 'Bonus Crown & Anchor points (2x, double, bonus points)',
+      urls: ['https://www.royalcaribbean.com/cruise-deals', 'https://www.royalcaribbean.com/crown-and-anchor-society'],
+      re: /\b(double|triple|2x|3x|2 x|3 x|twice the|bonus|extra)\s+(crown\s*(?:&|and|&amp;)\s*anchor\s+)?(cruise\s+)?points\b|\bpoints?\s+multiplier\b/i
+    },
+    giftcards: {
+      title: 'Royal gift card deals (bonus, % off, sale)',
+      urls: ['https://www.royalcaribbean.com/gift-cards', 'https://www.royalcaribbean.com/cruise-deals'],
+      re: /gift\s*cards?\b[^.!?]{0,120}?(\d{1,2}\s?%|\$\d+\s+bonus|\bbonus\b|\bsave\b|\bsale\b|\bdiscount|\boff\b)|(\d{1,2}\s?%\s*off|\bbonus\b|\bsale\b|\bsave\b)[^.!?]{0,80}?gift\s*cards?\b/i
+    }
+  };
+  var SPECIAL_HOSTS = ['www.royalcaribbean.com', 'www.celebritycruises.com'];
+
+  function specialUrlOk(u) {
+    try { var x = new URL(u); return x.protocol === 'https:' && SPECIAL_HOSTS.indexOf(x.hostname) >= 0 && !x.username && !x.password && !x.port; }
+    catch (e) { return false; }
+  }
+
+  function escapeRe(w) { return w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  /* plain words -> pattern: any of the comma-separated phrases, whole words, case-insensitive */
+  function keywordRe(words) {
+    var list = String(words || '').split(',').map(function (w) { return w.trim().slice(0, 60); }).filter(Boolean).slice(0, 10);
+    if (!list.length) return null;
+    return new RegExp('\\b(' + list.map(function (w) { return escapeRe(w).replace(/\s+/g, '\\s+'); }).join('|') + ')\\b', 'i');
+  }
+
+  /* readable text from an HTML / Next.js page (tags, scripts' JSON escapes and entities flattened) */
+  function pageText(html) {
+    return String(html || '')
+      .replace(/\\u0026/g, '&').replace(/\\u003c/gi, '<').replace(/\\u003e/gi, '>').replace(/\\n|\\t/g, ' ').replace(/\\"/g, '"')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&#39;|&rsquo;/g, "'").replace(/&quot;/g, '"').replace(/&[a-z]+;/gi, ' ')
+      .replace(/\s+/g, ' ');
+  }
+
+  /* the sentences that match (trimmed, de-duplicated, at most 6) */
+  function specialSnippets(text, re) {
+    var out = [], seen = {};
+    var g = new RegExp(re.source, 'gi'), m, n = 0;
+    while ((m = g.exec(text)) && n < 200) {
+      n++;
+      if (m[0] === '') { g.lastIndex++; continue; }
+      var start = Math.max(text.lastIndexOf('. ', m.index), text.lastIndexOf('"', m.index), text.lastIndexOf('>', m.index), m.index - 120);
+      var end = m.index + m[0].length;
+      var stop = text.slice(end, end + 160).search(/[.!?"<]/);
+      end = stop >= 0 ? end + stop + 1 : end + 120;
+      var sn = text.slice(start + 1, end).replace(/^[^A-Za-z0-9$]+/, '').replace(/[\s,;:"]+$/, '').trim();
+      if (sn.length < 8 || /[{}\\]|function\s*\(|=>/.test(sn)) continue; // skip code
+      var key = sn.toLowerCase().replace(/[^a-z0-9%$]+/g, ' ').trim();
+      if (seen[key]) continue;
+      seen[key] = 1; out.push(sn.slice(0, 220));
+      if (out.length >= 6) break;
+    }
+    return out;
+  }
+
+  function snippetKey(sn) {
+    var k = sn.toLowerCase().replace(/[^a-z0-9%$]+/g, ' ').trim(), hsh = 0;
+    for (var i = 0; i < k.length; i++) hsh = (hsh * 31 + k.charCodeAt(i)) | 0;
+    return (hsh >>> 0).toString(36);
+  }
+
+  async function checkSpecial(http, a, now) {
+    var preset = SPECIALS[a.special];
+    var re = preset ? preset.re : keywordRe(a.keywords);
+    var urls = preset ? preset.urls : String(a.urls || '').split('|').filter(specialUrlOk).slice(0, 3);
+    if (!re || !urls.length) { a.lastError = 'Nothing to watch'; a.lastChecked = now; return { alert: a, message: null }; }
+    var found = [], fails = 0, lastErr = '';
+    for (var i = 0; i < urls.length; i++) {
+      var r = null;
+      try { r = await http('GET', urls[i], { headers: { 'User-Agent': UA_WEB, 'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'en-US,en;q=0.9' } }); }
+      catch (e) { r = null; lastErr = String(e && e.message || e); }
+      if (!r || r.status !== 200) { fails++; if (r) lastErr = r.status === 403 || r.status === 429 ? BLOCKED_MSG : 'Page answered ' + r.status + ' (' + urls[i] + ')'; continue; }
+      specialSnippets(pageText(r.body), re).forEach(function (sn) { found.push({ text: sn, url: urls[i] }); });
+    }
+    a.lastChecked = now;
+    if (fails === urls.length) { a.lastError = lastErr || 'Could not read the page'; return { alert: a, message: null }; }
+    a.lastError = null;
+    var seen = String(a.seen || '').split(' ').filter(Boolean);
+    var dup = {};
+    var fresh = found.filter(function (f) { var k = snippetKey(f.text); if (seen.indexOf(k) >= 0 || dup[k]) return false; dup[k] = 1; return true; });
+    a.found = found.length ? found[0].text.slice(0, 220) : '';
+    a.foundCount = found.length;
+    a.status = found.length ? 'found' : 'watching';
+    if (!fresh.length) return { alert: a, message: null };
+    // remember what we told them about (newest first, bounded)
+    a.seen = fresh.map(function (f) { return snippetKey(f.text); }).concat(seen).slice(0, 60).join(' ');
+    var title = preset ? preset.title : (a.title || 'Special');
+    var drop = { type: 'special', title: title, snippet: fresh[0].text, more: fresh.length - 1, url: fresh[0].url, shipName: '', sailDate: '' };
+    return { alert: a, message: title + ': ' + fresh[0].text, drop: drop };
+  }
+
   async function checkAlert(http, alert) {
     var a = JSON.parse(JSON.stringify(alert));
     var now = new Date().toISOString();
+    if (a.type === 'special') return checkSpecial(http, a, now);
     var current = null;
     try {
       if (a.type === 'cabin') {
@@ -874,6 +975,7 @@
     ALLOWED_HOSTS: ALLOWED_HOSTS,
     getShips: getShips, getSailings: getSailings, getItinerary: getItinerary,
     getCategories: getCategories, getProducts: getProducts, getCabins: getCabins,
+    SPECIALS: SPECIALS, specialUrlOk: specialUrlOk, keywordRe: keywordRe, pageText: pageText, specialSnippets: specialSnippets, snippetKey: snippetKey,
     parseCabins: parseCabins, getRoomOptions: getRoomOptions, cruisePrice: cruisePrice, parseSplit: parseSplit, splitText: splitText, parseRoomOptions: parseRoomOptions, bestByKind: bestByKind, combineSplit: combineSplit,
     cabinTypeOf: cabinTypeOf, CABIN_KIND_NAMES: CABIN_KIND_NAMES, planSplits: planSplits, occupanciesFor: occupanciesFor, bestCombos: bestCombos, cabinUrl: cabinUrl, CABIN_HEADERS: CABIN_HEADERS, extractJsonArray: extractJsonArray,
     checkAlert: checkAlert, login: login, checkPurchases: checkPurchases, getProfile: getProfile, discountOpts: discountOpts, discountLabels: discountLabels,

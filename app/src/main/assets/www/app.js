@@ -76,7 +76,7 @@
   function loadAlerts() { return P.getAlerts().then(function (a) { alerts = Array.isArray(a) ? a : []; updateBadge(); return alerts; }).catch(function () { return alerts; }); }
   function saveAlerts() { updateBadge(); return P.saveAlerts(alerts); }
   function updateBadge() {
-    var n = alerts.filter(function (a) { return a.status === 'dropped'; }).length, b = $('alertBadge');
+    var n = alerts.filter(function (a) { return a.status === 'dropped' || a.status === 'found'; }).length, b = $('alertBadge');
     b.hidden = !n; b.textContent = n;
   }
   function alertId(a) {
@@ -1044,11 +1044,62 @@
   }
 
   /* ================= Alerts ================= */
+  /* ---------- Royal specials (bonus points, gift card deals, your own words on a Royal page) ---------- */
+  function ensureBackground() {
+    if (P.features.background === true) P.getSettings().then(function (st) {
+      if (!st.background) P.saveSettings({ background: true, hours: st.hours || 12 });
+    });
+  }
+  function specialsCard(onChange) {
+    var card = h('div', { class: 'card' });
+    function draw() {
+      clear(card);
+      var how = P.kind === 'web' ? 'Checked every 20 minutes and texted right away (not held for the daily text), because sales like the 2024 gift card flash sale can end within hours.'
+        : 'Checked about every 30 minutes while one of these is on, because sales can end within hours. Your phone shows a notification.';
+      add(card, [h('b', { text: '\u2728 Royal specials' }), h('p', { class: 'small muted', text: 'Get alerted when Royal Caribbean posts new wording about these on its deals pages. ' + how })]);
+      Object.keys(Core.SPECIALS).forEach(function (key) {
+        var id = 'special|' + key;
+        var on = h('input', { type: 'checkbox', checked: alerts.some(function (a) { return a.id === id; }) });
+        on.onchange = function () {
+          if (on.checked) {
+            alerts.unshift({ id: id, type: 'special', special: key, title: Core.SPECIALS[key].title, status: 'watching', created: new Date().toISOString(), initialPrice: null });
+            ensureBackground(); toast('Watching for ' + (key === 'points' ? 'bonus points' : 'gift card deals'));
+          } else alerts = alerts.filter(function (a) { return a.id !== id; });
+          saveAlerts(); onChange();
+        };
+        add(card, h('label', { class: 'toggle' }, h('span', { text: Core.SPECIALS[key].title }), on));
+      });
+      add(card, h('button', { class: 'btn ghost block', style: 'margin-top:8px', text: '+ Watch a Royal page for my own words', onclick: customSheet }));
+    }
+    function customSheet() {
+      var url = h('input', { type: 'url', placeholder: 'https://www.royalcaribbean.com/cruise-deals', value: 'https://www.royalcaribbean.com/cruise-deals' });
+      var words = h('input', { placeholder: 'e.g. kids sail free, 60% off, Black Friday' });
+      var msg = h('div');
+      openSheet([h('h3', { text: 'Watch a page for words' }),
+        h('p', { class: 'small muted', text: 'Paste a royalcaribbean.com or celebritycruises.com page and the words to look for (separate phrases with commas). You get an alert when a new sentence with any of them shows up.' }),
+        h('label', { class: 'field' }, h('span', { text: 'Page' }), url), h('label', { class: 'field' }, h('span', { text: 'Words or phrases' }), words), msg,
+        h('button', { class: 'btn block', text: 'Start watching', onclick: function () {
+          clear(msg);
+          var u = url.value.trim(), w = words.value.trim();
+          if (!Core.specialUrlOk(u)) { add(msg, errBox('Use an https://www.royalcaribbean.com/... or https://www.celebritycruises.com/... page.')); return; }
+          if (!Core.keywordRe(w)) { add(msg, errBox('Type at least one word or phrase.')); return; }
+          var id = 'special|custom|' + u + '|' + w.toLowerCase();
+          if (alerts.some(function (a) { return a.id === id; })) { add(msg, errBox('You are already watching that.')); return; }
+          var path = new URL(u).pathname.replace(/\/$/, '') || '/';
+          alerts.unshift({ id: id, type: 'special', special: 'custom', urls: u, keywords: w, title: '"' + w + '" on ' + path, status: 'watching', created: new Date().toISOString(), initialPrice: null });
+          saveAlerts(); ensureBackground(); closeSheet(); toast('Watching ' + path); onChange();
+        } })]);
+    }
+    draw();
+    return { el: card, draw: draw };
+  }
+
   views.alerts = function (v) {
     setTitle('Price alerts', alerts.length ? alerts.length + ' watching' : '');
     var listEl = h('div'), settingsEl = h('div');
     var checkBtn = h('button', { class: 'btn block', text: '↻ Check prices now' });
-    add(v, [checkBtn, h('div', { style: 'height:12px' }), listEl, settingsEl]);
+    var specials = specialsCard(function () { draw(); });
+    add(v, [checkBtn, h('div', { style: 'height:12px' }), listEl, specials.el, settingsEl]);
     checkBtn.onclick = function () {
       if (!alerts.length) return;
       checkBtn.disabled = true; clear(checkBtn); add(checkBtn, [h('span', { class: 'spin' }), ' Checking ' + alerts.length + ' alert(s)…']);
@@ -1056,6 +1107,19 @@
         .catch(function (e) { toast(e.message || 'Check failed'); })
         .then(function () { if (stack[stack.length - 1].view === 'alerts') render(); });
     };
+    function specialRow(a) {
+      var pill = a.status === 'found' ? h('span', { class: 'pill drop', text: '\u2728 Spotted' })
+        : a.lastError ? h('span', { class: 'pill warn', text: 'Check failed' }) : h('span', { class: 'pill ok', text: 'Watching' });
+      return h('div', { class: 'prod' },
+        h('div', { class: 'grow' },
+          h('div', { class: 't', text: '\u2728 ' + a.title }),
+          a.found ? h('div', { class: 'v', text: '"' + a.found + '"' + (a.foundCount > 1 ? ' (+' + (a.foundCount - 1) + ' more)' : '') }) : null,
+          a.lastError ? h('div', { class: 'v', text: a.lastError }) : null,
+          h('div', { class: 'v' }, pill, a.lastChecked ? ' · checked ' + new Date(a.lastChecked).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ' · not checked yet')),
+        h('button', { class: 'bell on', 'aria-label': 'Stop watching ' + a.title, text: '\u2715', onclick: function () {
+          alerts = alerts.filter(function (x) { return x.id !== a.id; }); saveAlerts(); draw(); specials.draw(); toast('Stopped watching');
+        } }));
+    }
     function draw() {
       clear(listEl);
       if (!alerts.length) {
@@ -1064,8 +1128,10 @@
         add(listEl, h('button', { class: 'btn block', text: 'Browse ships', onclick: function () { setRoot('explore'); } }));
         return;
       }
-      var sorted = alerts.slice().sort(function (a, b) { return (b.status === 'dropped') - (a.status === 'dropped'); });
+      checkBtn.hidden = false;
+      var sorted = alerts.slice().sort(function (a, b) { return (b.status === 'dropped' || b.status === 'found') - (a.status === 'dropped' || a.status === 'found'); });
       add(listEl, h('div', { class: 'list' }, sorted.map(function (a) {
+        if (a.type === 'special') return specialRow(a);
         var pill = a.status === 'dropped' ? h('span', { class: 'pill drop', text: '↓ Price dropped' })
           : a.status === 'unavailable' ? h('span', { class: 'pill warn', text: 'Not for sale' })
             : a.lastError ? h('span', { class: 'pill warn', text: 'Check failed' }) : h('span', { class: 'pill ok', text: 'Watching' });
@@ -1103,8 +1169,32 @@
 
   /* ================= My Cruises (logged-in purchase check) ================= */
   var session = null, lastResults = null;
+  /*
+   * Saved cruise-line login. Phone: kept in the app's own storage on the device. Web server: kept
+   * encrypted on the server (P.savedLogin) and never sent back to the browser - the server signs in.
+   */
+  var savedLogin = P.savedLogin || {
+    get: function () { var s = pref('login', {}); return Promise.resolve({ line: s.line, user: s.user, remembered: !!(P.features.rememberPassword && s.pass) }); },
+    signIn: function () { var s = pref('login', {}); return Core.login(http, s.user, s.pass, s.line); },
+    remember: function (line, user, pass) { setPref('login', { line: line, user: user, pass: pass }); return Promise.resolve(); },
+    forget: function () { var s = pref('login', {}); setPref('login', { line: s.line, user: s.user }); return Promise.resolve(); }
+  };
+  var autoTried = false;
+
   views.mycruises = function (v) {
     setTitle('My cruises', 'Check what you already bought');
+    if (!session && !autoTried) {
+      autoTried = true;
+      add(v, h('div', { class: 'progress' }, h('span', { class: 'spin' }), 'Checking for a saved login…'));
+      savedLogin.get().then(function (s) {
+        if (!document.body.contains(v)) return;
+        if (!s || !s.remembered) { clear(v); return loginForm(v); }
+        clear(v); add(v, h('div', { class: 'progress' }, h('span', { class: 'spin' }), 'Signing in as ' + s.user + '…'));
+        return savedLogin.signIn().then(function (sess) { session = sess; lastResults = null; profile = null; if (document.body.contains(v)) render(); },
+          function (e) { if (document.body.contains(v)) { clear(v); loginForm(v, e); } });
+      }).catch(function () { if (document.body.contains(v)) { clear(v); loginForm(v); } });
+      return;
+    }
     if (!session) return loginForm(v);
     var out = h('div');
     add(v, [h('div', { class: 'row', style: 'margin-bottom:10px' }, h('div', { class: 'grow small muted', text: 'Signed in to ' + (session.line === 'royalcaribbean' ? 'Royal Caribbean' : 'Celebrity') }),
@@ -1183,29 +1273,46 @@
       })));
     });
   }
-  function loginForm(v) {
+  function loginForm(v, autoErr) {
     var saved = pref('login', {});
     var line = h('select', null, [['royalcaribbean', 'Royal Caribbean'], ['celebritycruises', 'Celebrity Cruises']].map(function (o) { return h('option', { value: o[0], selected: saved.line === o[0], text: o[1] }); }));
     var user = h('input', { type: 'email', autocomplete: 'username', value: saved.user || '', placeholder: 'you@example.com' });
     var pass = h('input', { type: 'password', autocomplete: 'current-password', value: P.features.rememberPassword ? (saved.pass || '') : '' });
     var remember = h('input', { type: 'checkbox', checked: !!saved.pass });
     var msg = h('div');
+    if (autoErr) add(msg, errBox('Your saved login did not work: ' + (autoErr.message || autoErr)));
+    var forgetBtn = h('button', { class: 'btn ghost block', hidden: true, text: 'Forget my saved login', onclick: function () {
+      savedLogin.forget().then(function () { forgetBtn.hidden = true; remember.checked = false; pass.value = ''; toast('Saved login removed'); });
+    } });
+    savedLogin.get().then(function (s) {
+      if (!s) return;
+      if (s.user && !user.value) user.value = s.user;
+      if (s.line) line.value = s.line;
+      if (s.remembered) { remember.checked = true; forgetBtn.hidden = false; }
+    }).catch(function () { /* none */ });
+    var rememberLabel = P.kind === 'web' ? 'Remember my login (kept encrypted on this server)' : 'Remember on this phone';
     var btn = h('button', { class: 'btn block', text: 'Sign in & check my purchases' });
     add(v, [
       h('div', { class: 'card' },
-        h('p', { class: 'small muted', style: 'margin-top:0', text: 'Sign in with your cruise line account to see every drink, dining, Wi-Fi and excursion purchase on your bookings and whether it is cheaper now. Your login goes only to the cruise line' + (P.kind === 'web' ? ' (relayed by this server, never stored).' : '.') }),
+        h('p', { class: 'small muted', style: 'margin-top:0', text: 'Sign in with your cruise line account to see every drink, dining, Wi-Fi and excursion purchase on your bookings and whether it is cheaper now. Your login goes only to the cruise line' + (P.kind === 'web' ? ' (relayed by this server; only kept, encrypted, if you tick Remember).' : '.') + ' Tap a cruise afterwards to shop its add-ons and set alerts.' }),
         h('label', { class: 'field' }, h('span', { text: 'Cruise line' }), line),
         h('label', { class: 'field' }, h('span', { text: 'Email' }), user),
         h('label', { class: 'field' }, h('span', { text: 'Password' }), pass),
-        P.features.rememberPassword ? h('label', { class: 'toggle small' }, h('span', { text: 'Remember on this phone' }), remember) : null,
-        msg, btn)
+        P.features.rememberPassword ? h('label', { class: 'toggle small' }, h('span', { text: rememberLabel }), remember) : null,
+        msg, btn, forgetBtn)
     ]);
     btn.onclick = function () {
       clear(msg);
       if (!user.value || !pass.value) { add(msg, errBox('Enter your email and password.')); return; }
       btn.disabled = true; btn.textContent = 'Signing in…';
-      setPref('login', { line: line.value, user: user.value, pass: P.features.rememberPassword && remember.checked ? pass.value : undefined });
-      Core.login(http, user.value.trim(), pass.value, line.value).then(function (s) { session = s; lastResults = null; profile = null; render(); })
+      var u = user.value.trim(), pw = pass.value, ln = line.value;
+      setPref('login', { line: ln, user: u });
+      Core.login(http, u, pw, ln).then(function (s) {
+        session = s; lastResults = null; profile = null;
+        // only a login that worked is remembered
+        var keep = P.features.rememberPassword && remember.checked ? savedLogin.remember(ln, u, pw) : savedLogin.forget();
+        return keep.catch(function (e) { toast('Signed in, but the login was not saved: ' + (e.message || e)); }).then(render);
+      })
         .catch(function (e) { btn.disabled = false; btn.textContent = 'Sign in & check my purchases'; add(msg, errBox(e)); });
     };
   }
