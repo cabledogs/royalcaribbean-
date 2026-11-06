@@ -29,6 +29,8 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().setStatusBarColor(Color.rgb(11, 58, 111));
+        // re-apply the background schedule so an update's new timing takes effect
+        if (Alerts.prefs(this).getBoolean("bg", false)) Alerts.schedule(this, true, Alerts.prefs(this).getInt("bgHours", 12));
         web = new WebView(this);
         setContentView(web);
         WebSettings s = web.getSettings();
